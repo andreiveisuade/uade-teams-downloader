@@ -56,59 +56,68 @@ run_step() {
             # Filtrar líneas relevantes para mostrar en terminal
             case "$line" in
                 *">> TEAM"*|*">> Abriendo"*|*">> Navegando"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
                 *" + "*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${GREEN}${line#*] }${RESET}"
                     ;;
                 *"! "*|*"!! "*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${YELLOW}${line#*] }${RESET}"
                     ;;
                 *"RESUMEN:"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${BOLD}${line#*] }${RESET}"
                     ;;
                 *"Transcribiendo:"*|*"Generando resumen"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
                 *"OK:"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${GREEN}${line#*] }${RESET}"
                     ;;
                 *"Materia:"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
                 *"Encontrados"*"videos"*|*"pendientes"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
                 *"Resultado:"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${line#*] }"
                     ;;
                 *"Contexto:"*)
-                    printf "\r%-70s\r" ""
+                    printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
                 *"SKIP"*|*"skip"*|*"Listando"*|*"archivo:"*|*"carpeta:"*|*"Crawleando"*|*"Library:"*|*"Discovering"*)
                     # Solo al log, no mostrar
                     ;;
                 *"%|"*)
-                    # Barra de progreso de whisper — reescribir en la misma línea
-                    local pct=$(echo "$line" | grep -o '[0-9]*%' | tail -1)
-                    [ -n "$pct" ] && printf "\r  ${DIM}Transcribiendo... ${pct}${RESET}    "
+                    # Barra de progreso de whisper
+                    local pct
+                    pct=$(echo "$line" | grep -o '[0-9]*%' | tail -1)
+                    if [ -n "$pct" ]; then
+                        local num=${pct%%%}
+                        local filled=$((num / 5))
+                        local empty=$((20 - filled))
+                        local bar
+                        bar=$(printf '█%.0s' $(seq 1 $filled 2>/dev/null) )
+                        bar="${bar}$(printf '░%.0s' $(seq 1 $empty 2>/dev/null) )"
+                        printf "\r  ${DIM}Transcribiendo [${bar}] ${pct}${RESET}  "
+                    fi
                     ;;
                 *)
                     # El resto solo al log
                     ;;
             esac
         done
-        printf "\r%-70s\r" ""
+        printf "\r%70s\r" " "
         return ${PIPESTATUS[0]}
     else
         "$@" >> "$LOGFILE" 2>&1
