@@ -9,6 +9,7 @@ summaries via Claude Code CLI. Summaries go to 02_Apuntes_Personales/.
 import argparse
 import sqlite3
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
 
@@ -185,19 +186,48 @@ def main():
 
     log(f"Encontrados {len(mp4s)} videos pendientes")
 
+    # Thread pool for summarization (runs in parallel with next transcription)
+    executor = ThreadPoolExecutor(max_workers=1) if not args.no_summary else None
+    pending_summary: Future | None = None
+
+    def wait_pending_summary():
+        """Wait for any pending summary to finish and log result."""
+        nonlocal pending_summary
+        if pending_summary is None:
+            return
+        try:
+            pending_summary.result()
+        except Exception as e:
+            log(f"  ERROR en resumen pendiente: {e}")
+        pending_summary = None
+
+    def submit_summary(text, mp4, mp4_path_str, txt_path, summary_path, materia_dir):
+        """Submit summarization to run in background thread."""
+        nonlocal pending_summary
+        wait_pending_summary()
+
+        def _do_summary():
+            materials = find_course_materials(materia_dir)
+            log(f"  Generando resumen ({len(materials)} materiales)...")
+            summary = summarize(text, mp4.name, materials)
+            summary_path.write_text(summary, encoding="utf-8")
+            log(f"  OK: {summary_path.name}")
+            record_transcription(conn, mp4_path_str, str(txt_path), str(summary_path))
+
+        pending_summary = executor.submit(_do_summary)
+
     for mp4 in mp4s:
         if is_transcribed(conn, str(mp4)):
             log(f"  SKIP (ya en DB): {mp4.name}")
             continue
 
         txt_path = mp4.with_suffix(".txt")
-        # materia_dir is parent of 05_Grabaciones/
         materia_dir = mp4.parent.parent
         apuntes_dir = materia_dir / "02_Apuntes_Personales"
         apuntes_dir.mkdir(parents=True, exist_ok=True)
         summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
 
-        # Transcribe
+        # Transcribe (GPU)
         try:
             text = transcribe(mp4, model=whisper_model)
         except Exception as e:
@@ -207,20 +237,16 @@ def main():
         txt_path.write_text(text, encoding="utf-8")
         log(f"  OK: {txt_path.name} ({len(text)} chars)")
 
-        # Summarize
-        if not args.no_summary:
-            try:
-                materials = find_course_materials(materia_dir)
-                log(f"  Generando resumen ({len(materials)} materiales encontrados)...")
-                summary = summarize(text, mp4.name, materials)
-                summary_path.write_text(summary, encoding="utf-8")
-                log(f"  OK: {summary_path.name}")
-                record_transcription(conn, str(mp4), str(txt_path), str(summary_path))
-            except Exception as e:
-                log(f"  ERROR en resumen: {e}")
-                record_transcription(conn, str(mp4), str(txt_path))
+        # Summarize (network — runs in parallel with next transcription)
+        if not args.no_summary and executor:
+            submit_summary(text, mp4, str(mp4), txt_path, summary_path, materia_dir)
         else:
             record_transcription(conn, str(mp4), str(txt_path))
+
+    # Wait for last summary
+    wait_pending_summary()
+    if executor:
+        executor.shutdown(wait=True)
 
     conn.close()
     log("Listo.")

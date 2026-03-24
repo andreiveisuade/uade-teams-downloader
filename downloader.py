@@ -29,6 +29,8 @@ SP_BASE = f"https://{SP_TENANT}.sharepoint.com"
 MAX_DOWNLOADS_PER_RUN = 50
 MAX_RETRIES = 3
 NAV_TIMEOUT = 30_000
+SKIP_LIBRARIES = {"Student Work"}
+_headless_mode = False  # set in main(), controls delay behavior
 
 FOLDER_KEYWORDS = {
     "Desarrollo_de_Aplicaciones": ["desarrollo", "aplicaciones"],
@@ -159,7 +161,10 @@ def match_team_to_folder(team_name: str) -> str:
 
 
 def human_delay(lo: float = 1.0, hi: float = 3.0):
-    time.sleep(random.uniform(lo, hi))
+    if _headless_mode:
+        time.sleep(random.uniform(0.3, 0.8))
+    else:
+        time.sleep(random.uniform(lo, hi))
 
 
 def log(msg: str, level: str = "INFO"):
@@ -252,7 +257,7 @@ def sp_discover_all_libraries(session: requests.Session, site_url: str) -> list[
         title = lib["Title"]
         root = lib["RootFolder"]["ServerRelativeUrl"]
         count = lib.get("ItemCount", 0)
-        skip = title.lower() in SKIP
+        skip = title.lower() in SKIP or title in SKIP_LIBRARIES
 
         status = "SKIP" if skip else f"{count} items"
         log(f"    {'  ' if skip else '+'} Library: '{title}' → {root} ({status})")
@@ -459,7 +464,9 @@ def main():
 
     prefixes = [args.team] if args.team else TEAM_PREFIXES
     db = DownloadDB()
+    global _headless_mode
     headless = not args.visible and has_session()
+    _headless_mode = headless
 
     print()
     print("=" * 60)
@@ -573,7 +580,7 @@ def main():
                     break
 
                 if prefix != prefixes[-1]:
-                    delay = random.uniform(10, 15)
+                    delay = random.uniform(2, 4) if _headless_mode else random.uniform(10, 15)
                     log(f"Pausa de {delay:.0f}s...")
                     time.sleep(delay)
 
