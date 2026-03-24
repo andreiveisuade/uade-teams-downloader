@@ -1,25 +1,28 @@
 # UADE Teams Downloader
 
-Pipeline automático: descarga material de Teams, organiza en carpetas, transcribe grabaciones y genera resúmenes.
+Pipeline automático: descarga material de Teams, organiza en carpetas, transcribe grabaciones y genera resúmenes inteligentes para estudio.
 
 ## Pipeline
 
 ```
 launchd (horarios programados)
-    └── run-pipeline.sh
-         ├── 1. downloader.py    → baja todo a teams_material/
-         ├── 2. organizer.py     → mueve a 01_-06_ con nomenclatura
-         └── 3. transcriber.py   → transcribe mp4 + resumen con Claude
+    └── run-pipeline.sh (caffeinate + spinner)
+         ├── 1. downloader.py    → baja de Teams/SharePoint a teams_material/
+         ├── 2. organizer.py     → mueve a 01_-06_ con nomenclatura estándar
+         ├── 3. transcriber.py   → transcribe mp4 (mlx-whisper) + resumen (claude -p sonnet)
+         └── 4. status.py        → reporte del ciclo de vida de archivos
 ```
+
+Si la Mac estaba dormida, launchd ejecuta al despertar. El pipeline bloquea idle sleep con `caffeinate` durante la ejecución.
 
 ## Estructura del repo
 
 ```
 downloader.py                          # Descarga de Teams/SharePoint
 organizer.py                           # Clasifica y mueve a 01_-06_
-transcriber.py                         # Transcripción (mlx-whisper) + resúmenes (claude -p)
-status.py                              # Vista unificada del ciclo de vida de archivos
-run-pipeline.sh                        # Orquestador (caffeinate + 4 pasos)
+transcriber.py                         # Transcripción + resúmenes inteligentes
+status.py                              # Vista unificada del ciclo de vida
+run-pipeline.sh                        # Orquestador (caffeinate, spinner, tee al log)
 uade-login.sh                          # Re-login de Teams (abre browser)
 com.andreiveis.uade-downloader.plist   # launchd agent
 requirements.txt                       # Dependencias Python
@@ -39,7 +42,7 @@ data/                                  # (gitignored)
 ├── 04_Evaluaciones/         ← parciales, finales         (EVAL_...)
 ├── 05_Grabaciones/          ← videos + transcripciones   (GRAB_XX_...)
 ├── 06_Material_Extra/       ← cronogramas, bibliografía
-└── teams_material/          ← dump crudo de SharePoint (staging)
+└── teams_material/          ← staging (se limpia después de organizar)
 ```
 
 ## Setup
@@ -75,14 +78,12 @@ launchctl load ~/Library/LaunchAgents/com.andreiveis.uade-downloader.plist
 | Desarrollo de Aplicaciones I | 562914  | Jue 11:45     | Jue 18:30      |
 | Ingeniería de Datos II       | 561218  | Jue 17:30     | Jue 18:30      |
 
-Si la Mac estaba dormida, launchd ejecuta al despertar.
-
 ## Uso manual
 
 ```bash
 source .venv/bin/activate
 
-# Pipeline completo
+# Pipeline completo (con spinner y colores en terminal)
 ./run-pipeline.sh
 
 # Scripts individuales
@@ -99,15 +100,25 @@ python3 status.py --mp4                # Ciclo de vida de grabaciones
 python3 status.py --detail             # Detalle por materia
 ```
 
+## Resúmenes inteligentes
+
+Cada grabación genera un resumen en `02_Apuntes_Personales/` con formato Obsidian:
+
+- **Modelo**: Claude Sonnet via `claude -p`
+- **Contexto por clase**: extrae texto de las slides de esa clase (`CLASE_XX_*`), el cronograma de la materia, y el resumen de la clase anterior
+- **Extracción**: PDFs (pypdf), PPTXs (python-pptx), DOCX
+- **Formato**: temas, conceptos para examen, citas del profe, correspondencia con slides, tareas con `- [ ] tarea 📅 fecha`
+- **Paralelismo**: el resumen de la clase N-1 se genera en background mientras se transcribe la clase N (GPU + red no compiten)
+
 ## Auth y sesión
 
 - La sesión de Teams/SharePoint dura ~30 días.
-- Si expira, el pipeline lo detecta, envía notificación de macOS, y sigue con los pasos 2-4.
+- Si expira, el pipeline lo detecta (exit code 2), envía notificación de macOS, y sigue con los pasos 2-4.
 - Para re-loguearse:
   ```bash
   ./uade-login.sh
   ```
-- Se abre Chromium, te logueás en Teams, y la sesión queda guardada. El próximo run automático funciona.
+- Se abre Chromium, te logueás en Teams, y la sesión queda guardada.
 
 ## Verificar
 
@@ -115,9 +126,8 @@ python3 status.py --detail             # Detalle por materia
 launchctl list | grep uade                     # Agent cargado
 launchctl start com.andreiveis.uade-downloader # Forzar ejecución
 ls -lt data/logs/                              # Logs recientes
-sqlite3 data/downloads.db "SELECT * FROM runs ORDER BY id DESC LIMIT 5;"
-sqlite3 data/downloads.db "SELECT * FROM organized ORDER BY rowid DESC LIMIT 10;"
-sqlite3 data/downloads.db "SELECT * FROM transcriptions;"
+python3 status.py                              # Estado del pipeline
+python3 status.py --mp4                        # Ciclo de vida de grabaciones
 ```
 
 ## Desinstalar
@@ -134,5 +144,15 @@ rm ~/Library/LaunchAgents/com.andreiveis.uade-downloader.plist
 - **launchd no corre**: Re-cargar el plist con `launchctl load`.
 - **Organizer clasifica mal**: Correr con `--dry-run` primero. Los ambiguos se clasifican con `claude -p`.
 - **Transcripción lenta**: mlx-whisper usa GPU de Apple Silicon. ~10 min por hora de clase con modelo medium.
-- **Mac se duerme durante el pipeline**: No debería — el pipeline usa `caffeinate` para bloquear idle sleep. Se libera al terminar.
+- **Mac se duerme durante el pipeline**: No debería — `caffeinate -i` bloquea idle sleep. Se libera al terminar.
 - **claude no disponible**: El pipeline detecta si `claude` CLI no está en PATH y corre transcripción sin resúmenes.
+- **Resumen pobre**: Verificar que las slides de esa clase estén en `01_Material_de_Clase/` con prefijo `CLASE_XX_`. Sin slides, el resumen se basa solo en la transcripción.
+
+## Dependencias
+
+- `playwright` — Automatización de browser para auth de Teams
+- `requests` — API REST de SharePoint
+- `mlx-whisper` — Transcripción local en Apple Silicon
+- `pypdf` — Extracción de texto de PDFs
+- `python-pptx` — Extracción de texto de presentaciones
+- `claude` CLI — Generación de resúmenes (Claude Code, plan Pro/Max)
