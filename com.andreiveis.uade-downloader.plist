@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.andreiveis.uade-downloader</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/andreiveis/projects/uade-teams-downloader/run-downloader.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Lunes 23:45 — IA Aplicada (termina 22:45, +1h) -->
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>45</integer>
+        </dict>
+        <!-- Martes 12:45 — PDS (termina 11:45, +1h) -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>12</integer>
+            <key>Minute</key>
+            <integer>45</integer>
+        </dict>
+        <!-- Jueves 18:30 — Desarrollo de Apps I + Ingeniería de Datos II -->
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/andreiveis/projects/uade-teams-downloader</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/andreiveis/projects/uade-teams-downloader/data/logs/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/andreiveis/projects/uade-teams-downloader/data/logs/launchd-stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>
