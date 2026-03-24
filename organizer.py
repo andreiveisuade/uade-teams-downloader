@@ -250,16 +250,20 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
     """Organize all files in teams_material/ for one materia."""
     teams_dir = materia_dir / "teams_material"
     if not teams_dir.exists():
+        log(f"Materia: {materia_dir.name}")
+        log(f"Resultado: sin archivos pendientes")
         return
 
     ensure_dest_folders(materia_dir)
 
     files = sorted(f for f in teams_dir.rglob("*") if f.is_file())
+
+    log(f"Materia: {materia_dir.name}")
+
     if not files:
+        log(f"Resultado: sin archivos pendientes")
         return
 
-    log(f"\n{'='*50}")
-    log(f"Materia: {materia_dir.name}")
     log(f"Archivos en teams_material/: {len(files)}")
 
     seen_files = {}

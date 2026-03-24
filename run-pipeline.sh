@@ -98,18 +98,18 @@ run_step() {
                 *"SKIP"*|*"skip"*|*"Listando"*|*"archivo:"*|*"carpeta:"*|*"Crawleando"*|*"Library:"*|*"Discovering"*)
                     # Solo al log, no mostrar
                     ;;
-                *"%|"*)
+                *"%|"*|*"frames/s"*)
                     # Barra de progreso de whisper
-                    local pct
-                    pct=$(echo "$line" | grep -o '[0-9]*%' | tail -1)
-                    if [ -n "$pct" ]; then
-                        local num=${pct%%%}
+                    local num
+                    num=$(echo "$line" | grep -o '[0-9]*%' | tail -1 | tr -d '%')
+                    if [ -n "$num" ] && [ "$num" -ge 0 ] 2>/dev/null; then
                         local filled=$((num / 5))
                         local empty=$((20 - filled))
-                        local bar
-                        bar=$(printf '█%.0s' $(seq 1 $filled 2>/dev/null) )
-                        bar="${bar}$(printf '░%.0s' $(seq 1 $empty 2>/dev/null) )"
-                        printf "\r  ${DIM}Transcribiendo [${bar}] ${pct}${RESET}  "
+                        local bar=""
+                        local j
+                        for j in $(seq 1 $filled 2>/dev/null); do bar="${bar}█"; done
+                        for j in $(seq 1 $empty 2>/dev/null); do bar="${bar}░"; done
+                        echo -ne "\r  ${DIM}Transcribiendo [${bar}] ${num}%%${RESET}  "
                     fi
                     ;;
                 *)
