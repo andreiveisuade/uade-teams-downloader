@@ -45,26 +45,71 @@ warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
 err()  { echo -e "  ${RED}✗${RESET} $1"; }
 info() { echo -e "  ${DIM}$1${RESET}"; }
 
-# Corre un comando, muestra spinner si interactivo, output va al log
-# Uso: run_step "label" comando args...
+# Corre un comando: muestra líneas clave en terminal, todo al log
 run_step() {
     local label="$1"
     shift
 
     if $INTERACTIVE; then
-        # Mostrar spinner mientras corre, output al log
-        "$@" >> "$LOGFILE" 2>&1 &
-        local pid=$!
-        local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-        local i=0
-        while kill -0 "$pid" 2>/dev/null; do
-            printf "\r  ${DIM}${spin:i++%${#spin}:1} ${label}...${RESET}  "
-            sleep 0.1
+        "$@" 2>&1 | while IFS= read -r line; do
+            echo "$line" >> "$LOGFILE"
+            # Filtrar líneas relevantes para mostrar en terminal
+            case "$line" in
+                *">> TEAM"*|*">> Abriendo"*|*">> Navegando"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${DIM}${line#*] }${RESET}"
+                    ;;
+                *" + "*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${GREEN}${line#*] }${RESET}"
+                    ;;
+                *"! "*|*"!! "*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${YELLOW}${line#*] }${RESET}"
+                    ;;
+                *"RESUMEN:"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${BOLD}${line#*] }${RESET}"
+                    ;;
+                *"Transcribiendo:"*|*"Generando resumen"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${DIM}${line#*] }${RESET}"
+                    ;;
+                *"OK:"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${GREEN}${line#*] }${RESET}"
+                    ;;
+                *"Materia:"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${DIM}${line#*] }${RESET}"
+                    ;;
+                *"Encontrados"*"videos"*|*"pendientes"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${DIM}${line#*] }${RESET}"
+                    ;;
+                *"Resultado:"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${line#*] }"
+                    ;;
+                *"Contexto:"*)
+                    printf "\r%-70s\r" ""
+                    echo -e "  ${DIM}${line#*] }${RESET}"
+                    ;;
+                *"SKIP"*|*"skip"*|*"Listando"*|*"archivo:"*|*"carpeta:"*|*"Crawleando"*|*"Library:"*|*"Discovering"*)
+                    # Solo al log, no mostrar
+                    ;;
+                *"%|"*)
+                    # Barra de progreso de whisper — reescribir en la misma línea
+                    local pct=$(echo "$line" | grep -o '[0-9]*%' | tail -1)
+                    [ -n "$pct" ] && printf "\r  ${DIM}Transcribiendo... ${pct}${RESET}    "
+                    ;;
+                *)
+                    # El resto solo al log
+                    ;;
+            esac
         done
-        wait "$pid"
-        local exit_code=$?
-        printf "\r%-60s\r" ""  # limpiar línea del spinner
-        return $exit_code
+        printf "\r%-70s\r" ""
+        return ${PIPESTATUS[0]}
     else
         "$@" >> "$LOGFILE" 2>&1
         return $?
