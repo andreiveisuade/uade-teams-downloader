@@ -8,9 +8,11 @@ Summaries go to 02_Apuntes_Personales/.
 """
 
 import argparse
+import os
 import re
 import sqlite3
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
@@ -209,13 +211,38 @@ def find_class_context(materia_dir: Path, class_num: int | None) -> dict:
 
 def transcribe(mp4_path: Path, model: str = WHISPER_MODEL) -> str:
     """Transcribe an mp4 file using mlx-whisper."""
-    log(f"  Transcribiendo: {mp4_path.name}")
-    result = mlx_whisper.transcribe(
-        str(mp4_path),
-        path_or_hf_repo=model,
-        language="es",
-        verbose=False,
-    )
+    size_mb = mp4_path.stat().st_size / (1024 * 1024)
+    log(f"  Transcribiendo: {mp4_path.name} ({size_mb:.0f} MB)")
+
+    # Heartbeat: print elapsed time every 30s so user knows it's alive
+    stop_heartbeat = threading.Event()
+    start = datetime.now()
+
+    def heartbeat():
+        while not stop_heartbeat.wait(30):
+            elapsed = datetime.now() - start
+            mins = int(elapsed.total_seconds() // 60)
+            secs = int(elapsed.total_seconds() % 60)
+            log(f"  ... transcribiendo ({mins}m {secs}s)")
+
+    hb = threading.Thread(target=heartbeat, daemon=True)
+    hb.start()
+
+    try:
+        result = mlx_whisper.transcribe(
+            str(mp4_path),
+            path_or_hf_repo=model,
+            language="es",
+            verbose=False,
+        )
+    finally:
+        stop_heartbeat.set()
+        hb.join(timeout=1)
+
+    elapsed = datetime.now() - start
+    mins = int(elapsed.total_seconds() // 60)
+    secs = int(elapsed.total_seconds() % 60)
+    log(f"  Transcripción completada en {mins}m {secs}s")
     return result["text"]
 
 

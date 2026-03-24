@@ -91,7 +91,7 @@ run_step() {
                     printf "\r%70s\r" " "
                     echo -e "  ${line#*] }"
                     ;;
-                *"Contexto:"*)
+                *"Contexto:"*|*"... transcribiendo"*|*"Transcripción completada"*)
                     printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
