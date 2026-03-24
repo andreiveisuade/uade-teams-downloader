@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pipeline completo: download → organize → transcribe+resumir
-# Llamado por launchd en los horarios programados.
+# Llamado por launchd o manualmente.
 # Usa caffeinate para que la Mac no duerma durante la ejecución.
 
 set -uo pipefail
@@ -11,64 +11,102 @@ mkdir -p "$LOG_DIR"
 
 LOGFILE="$LOG_DIR/$(date +%Y%m%d-%H%M%S).log"
 
+# --- Colores (solo si hay terminal) ---
+if [ -t 1 ]; then
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    GREEN='\033[32m'
+    YELLOW='\033[33m'
+    RED='\033[31m'
+    CYAN='\033[36m'
+    RESET='\033[0m'
+    INTERACTIVE=true
+else
+    BOLD='' DIM='' GREEN='' YELLOW='' RED='' CYAN='' RESET=''
+    INTERACTIVE=false
+fi
+
+header() {
+    echo ""
+    echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}  $1${RESET}"
+    echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+step() {
+    local num=$1 total=$2 label=$3
+    echo ""
+    echo -e "  ${BOLD}[${num}/${total}]${RESET} ${GREEN}${label}${RESET}"
+    echo -e "  ${DIM}$(printf '%.0s─' {1..46})${RESET}"
+}
+
+ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
+warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
+err()  { echo -e "  ${RED}✗${RESET} $1"; }
+
 notify() {
     osascript -e "display notification \"$1\" with title \"UADE Pipeline\"" 2>/dev/null || true
 }
 
-# caffeinate -i: previene idle sleep mientras el pipeline corra
-# -w $$: se libera automáticamente cuando este script termina
+# --- Main ---
+
 caffeinate -i -w $$ &
 CAFF_PID=$!
 
-{
-    echo "=== UADE Pipeline — $(date) ==="
-    echo "caffeinate PID: $CAFF_PID (sleep bloqueado)"
+run_pipeline() {
+    header "UADE Pipeline — $(date '+%d/%m %H:%M')"
+    echo -e "  ${DIM}Log: ${LOGFILE}${RESET}"
+    echo -e "  ${DIM}Sleep bloqueado (caffeinate PID: ${CAFF_PID})${RESET}"
+
     cd "$PROJECT_DIR"
     source .venv/bin/activate
 
     # Paso 1: Descargar
-    echo ""
-    echo ">>> PASO 1: Descarga"
+    step 1 4 "Descarga de Teams"
     python3 downloader.py 2>&1
     DL_EXIT=$?
 
-    if [ $DL_EXIT -ne 0 ]; then
-        echo "!!! Downloader falló (exit $DL_EXIT)"
-        if [ $DL_EXIT -eq 2 ]; then
-            notify "Sesión expirada. Corré: ~/projects/uade-teams-downloader/uade-login.sh"
-        else
-            notify "Error en descarga (exit $DL_EXIT). Ver logs."
-        fi
-        echo ">>> Continuando con organize + transcribe sobre material existente..."
+    if [ $DL_EXIT -eq 0 ]; then
+        ok "Descarga completada"
+    elif [ $DL_EXIT -eq 2 ]; then
+        err "Sesión expirada — corré: ./uade-login.sh"
+        notify "Sesión expirada. Corré: ./uade-login.sh"
+        warn "Continuando con material existente..."
+    else
+        err "Descarga falló (exit $DL_EXIT)"
+        notify "Error en descarga (exit $DL_EXIT). Ver logs."
+        warn "Continuando con material existente..."
     fi
 
     # Paso 2: Organizar
-    echo ""
-    echo ">>> PASO 2: Organización"
+    step 2 4 "Organización de archivos"
     python3 organizer.py 2>&1
+    ok "Organización completada"
 
     # Paso 3: Transcribir + Resumir
-    # Verificar que claude está disponible para resúmenes
-    echo ""
-    echo ">>> PASO 3: Transcripción + Resúmenes"
+    step 3 4 "Transcripción + Resúmenes"
     if command -v claude &>/dev/null; then
         python3 transcriber.py 2>&1
     else
-        echo "claude CLI no disponible, transcribiendo sin resúmenes"
+        warn "claude CLI no disponible, sin resúmenes"
         python3 transcriber.py --no-summary 2>&1
     fi
+    ok "Transcripción completada"
 
     # Paso 4: Status
-    echo ""
-    echo ">>> STATUS"
+    step 4 4 "Estado del pipeline"
     python3 status.py 2>&1
 
-    echo ""
-    echo "=== Pipeline completado — $(date) ==="
-} >> "$LOGFILE" 2>&1
+    header "Pipeline completado — $(date '+%d/%m %H:%M')"
+}
 
-# caffeinate se mata automáticamente (-w $$), pero por si acaso
+# Si hay terminal: mostrar en vivo + guardar en log
+# Si no hay terminal (launchd): solo log
+if $INTERACTIVE; then
+    run_pipeline 2>&1 | tee "$LOGFILE"
+else
+    run_pipeline >> "$LOGFILE" 2>&1
+fi
+
 kill "$CAFF_PID" 2>/dev/null || true
-
-# Limpiar logs viejos (más de 30 días)
 find "$LOG_DIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
