@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Transcribe UADE class recordings and generate summaries.
 
-Finds .mp4 files in ~/UADE/4to cuatrimestre/*/teams_material/,
+Finds .mp4 files in ~/UADE/4to cuatrimestre/*/05_Grabaciones/,
 transcribes with mlx-whisper (local, Apple Silicon), and generates
-summaries via Claude Code CLI.
+summaries via Claude Code CLI. Summaries go to 02_Apuntes_Personales/.
 """
 
 import argparse
@@ -69,26 +69,20 @@ def log(msg: str):
 
 
 def find_mp4s() -> list[Path]:
-    """Find .mp4 files that don't have a .txt transcription yet.
-
-    Deduplicates by filename — SharePoint sometimes mirrors files in
-    General/ and Documentos/General/. Prefers the shorter path.
-    """
-    seen = {}  # filename -> Path (keep shortest path)
+    """Find .mp4 files in 05_Grabaciones/ that haven't been transcribed."""
+    results = []
     for materia_dir in sorted(BASE_DIR.iterdir()):
         if not materia_dir.is_dir():
             continue
-        teams_dir = materia_dir / "teams_material"
-        if not teams_dir.exists():
+        grab_dir = materia_dir / "05_Grabaciones"
+        if not grab_dir.exists():
             continue
-        for mp4 in sorted(teams_dir.rglob("*.mp4")):
+        for mp4 in sorted(grab_dir.glob("*.mp4")):
             txt = mp4.with_suffix(".txt")
             if txt.exists():
                 continue
-            key = (materia_dir.name, mp4.name)
-            if key not in seen or len(str(mp4)) < len(str(seen[key])):
-                seen[key] = mp4
-    return sorted(seen.values())
+            results.append(mp4)
+    return results
 
 
 def find_course_materials(materia_dir: Path) -> list[Path]:
@@ -197,7 +191,11 @@ def main():
             continue
 
         txt_path = mp4.with_suffix(".txt")
-        summary_path = mp4.with_name(mp4.stem + "_resumen.md")
+        # materia_dir is parent of 05_Grabaciones/
+        materia_dir = mp4.parent.parent
+        apuntes_dir = materia_dir / "02_Apuntes_Personales"
+        apuntes_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
 
         # Transcribe
         try:
@@ -212,10 +210,6 @@ def main():
         # Summarize
         if not args.no_summary:
             try:
-                materia_dir = mp4
-                while materia_dir.name != "teams_material" and materia_dir != BASE_DIR:
-                    materia_dir = materia_dir.parent
-                materia_dir = materia_dir.parent
                 materials = find_course_materials(materia_dir)
                 log(f"  Generando resumen ({len(materials)} materiales encontrados)...")
                 summary = summarize(text, mp4.name, materials)

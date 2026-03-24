@@ -485,11 +485,11 @@ def main():
 
             if not ensure_logged_in(page):
                 if headless:
-                    log_warn("Sin sesión. Relanzando visible...")
+                    log_err("Sesión expirada en modo headless.")
+                    log_err("Corré: python3 downloader.py --visible")
                     context.close()
-                    context, page = launch_browser(pw, headless=False)
-                    page.goto("https://teams.microsoft.com", wait_until="domcontentloaded")
-                    human_delay(3, 5)
+                    import sys
+                    sys.exit(2)
                 wait_for_manual_login(page)
             else:
                 log_ok("Sesión activa")
