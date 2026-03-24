@@ -55,6 +55,13 @@ def is_organized(conn, source: str) -> bool:
     return row is not None
 
 
+def get_organized_dest(conn, source: str) -> str | None:
+    row = conn.execute(
+        "SELECT dest_path FROM organized WHERE source_path=?", (source,)
+    ).fetchone()
+    return row[0] if row else None
+
+
 def record_organized(conn, source: str, dest: str, category: str):
     conn.execute(
         "INSERT OR REPLACE INTO organized VALUES (?,?,?,?)",
@@ -269,6 +276,10 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
 
         source_key = str(f)
         if is_organized(conn, source_key):
+            # Ya organizado: si el destino existe, borrar el original
+            dest_path = get_organized_dest(conn, source_key)
+            if dest_path and Path(dest_path).exists() and not dry_run:
+                f.unlink()
             skipped += 1
             continue
 
@@ -290,12 +301,35 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
             log(f"  [DRY] {f.name} → {DEST_FOLDERS[category]}/{new_name}")
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(f), str(dest))
+            shutil.move(str(f), str(dest))
             record_organized(conn, source_key, str(dest), category)
             log(f"  + {f.name} → {DEST_FOLDERS[category]}/{new_name}")
             moved += 1
 
-    log(f"Resultado: {moved} movidos, {skipped} omitidos")
+    # Limpiar duplicados: archivos en teams_material/ que ya están organizados
+    dupes_removed = 0
+    for f in sorted(teams_dir.rglob("*"), reverse=True):
+        if f.is_file() and not should_skip(f):
+            if is_organized(conn, str(f)):
+                continue
+            # Archivo duplicado de SharePoint (misma data, path más largo)
+            # Si ya se movió el original, este es la copia espejo
+            try:
+                key = (f.name, f.stat().st_size)
+            except OSError:
+                continue
+            if key in seen_files and seen_files[key] != f:
+                if not dry_run:
+                    f.unlink()
+                    dupes_removed += 1
+
+    # Limpiar carpetas vacías en teams_material/
+    if not dry_run:
+        for dirpath in sorted(teams_dir.rglob("*"), reverse=True):
+            if dirpath.is_dir() and not any(dirpath.iterdir()):
+                dirpath.rmdir()
+
+    log(f"Resultado: {moved} movidos, {skipped} omitidos, {dupes_removed} duplicados eliminados")
 
 
 def main():

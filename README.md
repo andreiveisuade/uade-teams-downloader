@@ -18,8 +18,9 @@ launchd (horarios programados)
 downloader.py                          # Descarga de Teams/SharePoint
 organizer.py                           # Clasifica y mueve a 01_-06_
 transcriber.py                         # Transcripción (mlx-whisper) + resúmenes (claude -p)
-run-pipeline.sh                        # Orquestador para launchd
-run-downloader.sh                      # Wrapper legacy (solo descarga)
+status.py                              # Vista unificada del ciclo de vida de archivos
+run-pipeline.sh                        # Orquestador (caffeinate + 4 pasos)
+uade-login.sh                          # Re-login de Teams (abre browser)
 com.andreiveis.uade-downloader.plist   # launchd agent
 requirements.txt                       # Dependencias Python
 data/                                  # (gitignored)
@@ -92,14 +93,21 @@ python3 organizer.py --dry-run         # Ver qué haría sin mover
 python3 transcriber.py                 # Transcribir + resumir
 python3 transcriber.py --no-summary    # Solo transcribir
 python3 transcriber.py --file x.mp4    # Solo un archivo
+python3 status.py                      # Resumen del pipeline
+python3 status.py --pending            # Qué falta procesar
+python3 status.py --mp4                # Ciclo de vida de grabaciones
+python3 status.py --detail             # Detalle por materia
 ```
 
 ## Auth y sesión
 
 - La sesión de Teams/SharePoint dura ~30 días.
-- Si expira, el pipeline lo detecta y envía una notificación de macOS.
-- Para re-loguearse: `python3 downloader.py --visible`
-- El pipeline sigue corriendo organizer + transcriber aunque falle la descarga.
+- Si expira, el pipeline lo detecta, envía notificación de macOS, y sigue con los pasos 2-4.
+- Para re-loguearse:
+  ```bash
+  ./uade-login.sh
+  ```
+- Se abre Chromium, te logueás en Teams, y la sesión queda guardada. El próximo run automático funciona.
 
 ## Verificar
 
@@ -121,8 +129,10 @@ rm ~/Library/LaunchAgents/com.andreiveis.uade-downloader.plist
 
 ## Troubleshooting
 
-- **Notificación "Sesión expirada"**: Correr `python3 downloader.py --visible`.
+- **Notificación "Sesión expirada"**: Correr `./uade-login.sh`.
 - **Logs vacíos**: Verificar dependencias (`pip install -r requirements.txt`).
 - **launchd no corre**: Re-cargar el plist con `launchctl load`.
 - **Organizer clasifica mal**: Correr con `--dry-run` primero. Los ambiguos se clasifican con `claude -p`.
 - **Transcripción lenta**: mlx-whisper usa GPU de Apple Silicon. ~10 min por hora de clase con modelo medium.
+- **Mac se duerme durante el pipeline**: No debería — el pipeline usa `caffeinate` para bloquear idle sleep. Se libera al terminar.
+- **claude no disponible**: El pipeline detecta si `claude` CLI no está en PATH y corre transcripción sin resúmenes.
