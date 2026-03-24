@@ -43,6 +43,33 @@ step() {
 ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
 warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
 err()  { echo -e "  ${RED}✗${RESET} $1"; }
+info() { echo -e "  ${DIM}$1${RESET}"; }
+
+# Corre un comando, muestra spinner si interactivo, output va al log
+# Uso: run_step "label" comando args...
+run_step() {
+    local label="$1"
+    shift
+
+    if $INTERACTIVE; then
+        # Mostrar spinner mientras corre, output al log
+        "$@" >> "$LOGFILE" 2>&1 &
+        local pid=$!
+        local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        local i=0
+        while kill -0 "$pid" 2>/dev/null; do
+            printf "\r  ${DIM}${spin:i++%${#spin}:1} ${label}...${RESET}  "
+            sleep 0.1
+        done
+        wait "$pid"
+        local exit_code=$?
+        printf "\r%-60s\r" ""  # limpiar línea del spinner
+        return $exit_code
+    else
+        "$@" >> "$LOGFILE" 2>&1
+        return $?
+    fi
+}
 
 notify() {
     osascript -e "display notification \"$1\" with title \"UADE Pipeline\"" 2>/dev/null || true
@@ -55,15 +82,17 @@ CAFF_PID=$!
 
 run_pipeline() {
     header "UADE Pipeline — $(date '+%d/%m %H:%M')"
-    echo -e "  ${DIM}Log: ${LOGFILE}${RESET}"
-    echo -e "  ${DIM}Sleep bloqueado (caffeinate PID: ${CAFF_PID})${RESET}"
+    info "Log: ${LOGFILE}"
+    info "Sleep bloqueado (caffeinate)"
 
     cd "$PROJECT_DIR"
     source .venv/bin/activate
 
+    local start_time=$SECONDS
+
     # Paso 1: Descargar
     step 1 4 "Descarga de Teams"
-    python3 -u downloader.py 2>&1
+    run_step "Descargando de SharePoint" python3 -u downloader.py
     DL_EXIT=$?
 
     if [ $DL_EXIT -eq 0 ]; then
@@ -80,33 +109,30 @@ run_pipeline() {
 
     # Paso 2: Organizar
     step 2 4 "Organización de archivos"
-    python3 -u organizer.py 2>&1
+    run_step "Organizando archivos" python3 -u organizer.py
     ok "Organización completada"
 
     # Paso 3: Transcribir + Resumir
     step 3 4 "Transcripción + Resúmenes"
     if command -v claude &>/dev/null; then
-        python3 -u transcriber.py 2>&1
+        run_step "Transcribiendo y generando resúmenes" python3 -u transcriber.py
     else
         warn "claude CLI no disponible, sin resúmenes"
-        python3 -u transcriber.py --no-summary 2>&1
+        run_step "Transcribiendo (sin resúmenes)" python3 -u transcriber.py --no-summary
     fi
     ok "Transcripción completada"
 
     # Paso 4: Status
     step 4 4 "Estado del pipeline"
-    python3 -u status.py 2>&1
+    echo ""
+    python3 -u status.py 2>&1 | tee -a "$LOGFILE"
 
-    header "Pipeline completado — $(date '+%d/%m %H:%M')"
+    local elapsed=$(( SECONDS - start_time ))
+    local mins=$(( elapsed / 60 ))
+    local secs=$(( elapsed % 60 ))
+    header "Pipeline completado — ${mins}m ${secs}s"
 }
 
-# Si hay terminal: mostrar en vivo + guardar en log
-# Si no hay terminal (launchd): solo log
-if $INTERACTIVE; then
-    run_pipeline 2>&1 | tee "$LOGFILE"
-else
-    run_pipeline >> "$LOGFILE" 2>&1
-fi
-
+run_pipeline
 kill "$CAFF_PID" 2>/dev/null || true
 find "$LOG_DIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true
