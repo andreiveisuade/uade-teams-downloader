@@ -156,8 +156,8 @@ Generá un resumen con este formato markdown:
 Sé conciso pero completo. No inventes información que no esté en la transcripción."""
 
     result = subprocess.run(
-        ["claude", "-p", prompt, "--model", "haiku"],
-        capture_output=True, text=True, timeout=120,
+        ["claude", "-p", "--model", "haiku"],
+        input=prompt, capture_output=True, text=True, timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(f"claude CLI falló: {result.stderr.strip()}")
