@@ -40,7 +40,7 @@ MATERIA_DISPLAY = {
 
 
 def init_db():
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS transcriptions (
@@ -424,11 +424,12 @@ def main():
         txt_path.write_text(text, encoding="utf-8")
         log(f"  OK: {txt_path.name} ({len(text)} chars)")
 
+        # Register transcription immediately (summary updates later)
+        record_transcription(conn, str(mp4), str(txt_path))
+
         # Summarize (network — runs in parallel with next transcription)
         if not args.no_summary and executor:
             submit_summary(text, mp4, str(mp4), txt_path, summary_path, materia_dir)
-        else:
-            record_transcription(conn, str(mp4), str(txt_path))
 
     # Wait for last summary
     wait_pending_summary()
