@@ -46,6 +46,11 @@ notify() {
     echo ">>> PASO 3: Transcripción + Resúmenes"
     python3 transcriber.py 2>&1
 
+    # Paso 4: Status
+    echo ""
+    echo ">>> STATUS"
+    python3 status.py 2>&1
+
     echo ""
     echo "=== Pipeline completado — $(date) ==="
 } >> "$LOGFILE" 2>&1
