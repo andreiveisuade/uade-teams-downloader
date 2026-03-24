@@ -63,7 +63,7 @@ run_pipeline() {
 
     # Paso 1: Descargar
     step 1 4 "Descarga de Teams"
-    python3 downloader.py 2>&1
+    python3 -u downloader.py 2>&1
     DL_EXIT=$?
 
     if [ $DL_EXIT -eq 0 ]; then
@@ -80,22 +80,22 @@ run_pipeline() {
 
     # Paso 2: Organizar
     step 2 4 "Organización de archivos"
-    python3 organizer.py 2>&1
+    python3 -u organizer.py 2>&1
     ok "Organización completada"
 
     # Paso 3: Transcribir + Resumir
     step 3 4 "Transcripción + Resúmenes"
     if command -v claude &>/dev/null; then
-        python3 transcriber.py 2>&1
+        python3 -u transcriber.py 2>&1
     else
         warn "claude CLI no disponible, sin resúmenes"
-        python3 transcriber.py --no-summary 2>&1
+        python3 -u transcriber.py --no-summary 2>&1
     fi
     ok "Transcripción completada"
 
     # Paso 4: Status
     step 4 4 "Estado del pipeline"
-    python3 status.py 2>&1
+    python3 -u status.py 2>&1
 
     header "Pipeline completado — $(date '+%d/%m %H:%M')"
 }
