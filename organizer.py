@@ -7,59 +7,20 @@ applying naming conventions from the prompt 05 system.
 
 import re
 import shutil
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 import config
+import db
+from backends import llm as llm_backend
 
 # --- Config ---
 
 BASE_DIR = config.BASE_DIR
-DB_PATH = config.DB_PATH
 DEST_FOLDERS = config.FOLDERS
 
 SKIP_DIRS = {"Student Work", "Submitted files", "Working files"}
 SKIP_FILES = {".DS_Store", "Thumbs.db"}
-
-# --- DB ---
-
-
-def init_db():
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS organized (
-            source_path TEXT PRIMARY KEY,
-            dest_path   TEXT NOT NULL,
-            category    TEXT NOT NULL,
-            organized_at TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    return conn
-
-
-def is_organized(conn, source: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM organized WHERE source_path=?", (source,)
-    ).fetchone()
-    return row is not None
-
-
-def get_organized_dest(conn, source: str) -> str | None:
-    row = conn.execute(
-        "SELECT dest_path FROM organized WHERE source_path=?", (source,)
-    ).fetchone()
-    return row[0] if row else None
-
-
-def record_organized(conn, source: str, dest: str, category: str):
-    conn.execute(
-        "INSERT OR REPLACE INTO organized VALUES (?,?,?,?)",
-        (source, dest, category, datetime.now().isoformat()),
-    )
-    conn.commit()
 
 
 # --- Classification ---
@@ -163,7 +124,7 @@ Ruta completa: {path}
 Respondé SOLO con el nombre de la categoría, una palabra, sin explicación."""
 
     try:
-        category = config.llm_complete_fast(prompt).strip().lower()
+        category = llm_backend.complete_fast(prompt).strip().lower()
         if category in DEST_FOLDERS:
             return category, _clean_name(path.name, path.suffix) + path.suffix
     except Exception:
@@ -266,9 +227,9 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
             continue
 
         source_key = str(f)
-        if is_organized(conn, source_key):
+        if db.is_organized(conn, source_key):
             # Ya organizado: si el destino existe, borrar el original
-            dest_path = get_organized_dest(conn, source_key)
+            dest_path = db.get_organized_dest(conn, source_key)
             if dest_path and Path(dest_path).exists() and not dry_run:
                 f.unlink()
             skipped += 1
@@ -281,7 +242,7 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
         # Avoid overwriting
         if dest.exists():
             if dest.stat().st_size == f.stat().st_size:
-                record_organized(conn, source_key, str(dest), category)
+                db.record_organized(conn, source_key, str(dest), category)
                 skipped += 1
                 continue
             # Different size, add suffix
@@ -332,7 +293,7 @@ def main():
                         help="Solo organizar esta materia (nombre de carpeta)")
     args = parser.parse_args()
 
-    conn = init_db()
+    conn = db.get_connection()
 
     log("UADE Material Organizer")
     log(f"Modo: {'DRY RUN' if args.dry_run else 'EJECUCIÓN'}")

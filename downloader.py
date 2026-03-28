@@ -46,33 +46,11 @@ FOLDER_KEYWORDS = {
 
 
 class DownloadDB:
-    """SQLite-backed registry of downloaded files. ACID, crash-safe."""
+    """Wrapper sobre db.py para compatibilidad con el downloader."""
 
     def __init__(self, path: Path = DB_PATH):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS downloads (
-                key         TEXT PRIMARY KEY,
-                team_prefix TEXT NOT NULL,
-                remote_path TEXT NOT NULL,
-                filename    TEXT NOT NULL,
-                size        INTEGER NOT NULL,
-                local_path  TEXT NOT NULL,
-                downloaded_at TEXT NOT NULL
-            )
-        """)
-        self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS runs (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                started_at TEXT NOT NULL,
-                finished_at TEXT,
-                files_downloaded INTEGER DEFAULT 0
-            )
-        """)
-        self._conn.commit()
+        import db as _db
+        self._conn = _db.get_connection()
         self._migrate_manifest()
 
     def _migrate_manifest(self):
