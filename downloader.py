@@ -21,7 +21,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
 import config as cfg
 
-TEAM_PREFIXES = ["568898", "561218", "558193", "562914"]
+TEAM_PREFIXES = cfg.TEAM_PREFIXES
 BASE_DIR = cfg.BASE_DIR
 PROJECT_DIR = cfg.PROJECT_DIR
 DATA_DIR = PROJECT_DIR / "data"

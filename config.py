@@ -26,6 +26,11 @@ BASE_DIR = Path(os.getenv(
 PROJECT_DIR = Path(__file__).parent
 DB_PATH = PROJECT_DIR / "data" / "downloads.db"
 
+# --- Teams ---
+
+_default_teams = "568898,561218,558193,562914"
+TEAM_PREFIXES = [t.strip() for t in os.getenv("TEAM_PREFIXES", _default_teams).split(",") if t.strip()]
+
 # --- Estructura de carpetas ---
 
 FOLDERS = {
