@@ -29,7 +29,7 @@ El setup interactivo guia paso a paso: instala dependencias, configura el backen
 ### Setup manual
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/andreiveisuade/uade-teams-downloader.git
 cd uade-teams-downloader
 python -m venv .venv
 source .venv/bin/activate          # macOS/Linux
