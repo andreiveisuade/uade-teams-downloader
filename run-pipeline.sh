@@ -126,13 +126,20 @@ run_step() {
 }
 
 notify() {
-    osascript -e "display notification \"$1\" with title \"UADE Pipeline\"" 2>/dev/null || true
+    if command -v osascript &>/dev/null; then
+        osascript -e "display notification \"$1\" with title \"UADE Pipeline\"" 2>/dev/null || true
+    elif command -v notify-send &>/dev/null; then
+        notify-send "UADE Pipeline" "$1" 2>/dev/null || true
+    fi
 }
 
 # --- Main ---
 
-caffeinate -i -w $$ &
-CAFF_PID=$!
+CAFF_PID=""
+if command -v caffeinate &>/dev/null; then
+    caffeinate -i -w $$ &
+    CAFF_PID=$!
+fi
 
 run_pipeline() {
     header "UADE Pipeline — $(date '+%d/%m %H:%M')"
@@ -188,5 +195,5 @@ run_pipeline() {
 }
 
 run_pipeline
-kill "$CAFF_PID" 2>/dev/null || true
+[ -n "$CAFF_PID" ] && kill "$CAFF_PID" 2>/dev/null || true
 find "$LOG_DIR" -name '*.log' -mtime +30 -delete 2>/dev/null || true

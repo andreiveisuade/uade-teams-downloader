@@ -1,5 +1,5 @@
 playwright>=1.58
 requests>=2.31
-mlx-whisper>=0.4
 pypdf>=4.0
 python-pptx>=1.0
+python-dotenv>=1.0

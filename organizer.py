@@ -8,24 +8,16 @@ applying naming conventions from the prompt 05 system.
 import re
 import shutil
 import sqlite3
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import config
+
 # --- Config ---
 
-BASE_DIR = Path.home() / "UADE" / "4to cuatrimestre"
-PROJECT_DIR = Path(__file__).parent
-DB_PATH = PROJECT_DIR / "data" / "downloads.db"
-
-DEST_FOLDERS = {
-    "material": "01_Material_de_Clase",
-    "apuntes": "02_Apuntes_Personales",
-    "tp": "03_Trabajos_Practicos",
-    "eval": "04_Evaluaciones",
-    "grabacion": "05_Grabaciones",
-    "extra": "06_Material_Extra",
-}
+BASE_DIR = config.BASE_DIR
+DB_PATH = config.DB_PATH
+DEST_FOLDERS = config.FOLDERS
 
 SKIP_DIRS = {"Student Work", "Submitted files", "Working files"}
 SKIP_FILES = {".DS_Store", "Thumbs.db"}
@@ -152,12 +144,12 @@ def classify_file(path: Path) -> tuple[str, str]:
             return "material", f"CLASE_{num:02d}_{_clean_name(name, suffix)}{suffix}"
         return "extra", _clean_name(name, suffix) + suffix
 
-    # --- Fallback: ask Claude ---
-    return classify_with_claude(path)
+    # --- Fallback: ask LLM ---
+    return classify_with_llm(path)
 
 
-def classify_with_claude(path: Path) -> tuple[str, str]:
-    """Fallback: use claude -p to classify ambiguous files."""
+def classify_with_llm(path: Path) -> tuple[str, str]:
+    """Fallback: use LLM to classify ambiguous files."""
     prompt = f"""Clasificá este archivo universitario en UNA de estas categorías:
 - material (slides, PDFs de clase, presentaciones)
 - tp (ejercicios, trabajos prácticos, actividades)
@@ -171,11 +163,7 @@ Ruta completa: {path}
 Respondé SOLO con el nombre de la categoría, una palabra, sin explicación."""
 
     try:
-        result = subprocess.run(
-            ["claude", "-p", "--model", "haiku"],
-            input=prompt, capture_output=True, text=True, timeout=30,
-        )
-        category = result.stdout.strip().lower()
+        category = config.llm_complete_fast(prompt).strip().lower()
         if category in DEST_FOLDERS:
             return category, _clean_name(path.name, path.suffix) + path.suffix
     except Exception:
@@ -238,9 +226,8 @@ def is_duplicate(path: Path, seen_files: dict) -> bool:
 
 
 def ensure_dest_folders(materia_dir: Path):
-    """Create 01_-06_ folders if they don't exist."""
-    for folder in DEST_FOLDERS.values():
-        (materia_dir / folder).mkdir(parents=True, exist_ok=True)
+    """Create folder structure if it doesn't exist."""
+    config.ensure_folder_structure(materia_dir)
 
 
 # --- Main ---
@@ -274,7 +261,7 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
         if should_skip(f):
             continue
 
-        if is_duplicate(f, seen_files) and seen_files[f.name] != f:
+        if is_duplicate(f, seen_files):
             skipped += 1
             continue
 

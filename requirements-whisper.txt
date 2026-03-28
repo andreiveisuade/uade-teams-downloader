@@ -1,0 +1,2 @@
+# Windows / Linux — transcripcion con OpenAI Whisper (GPU CUDA o CPU)
+openai-whisper>=20231117

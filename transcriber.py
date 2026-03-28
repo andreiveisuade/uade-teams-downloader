@@ -11,21 +11,17 @@ import argparse
 import os
 import re
 import sqlite3
-import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
 
-import mlx_whisper
+import config
 
 # --- Config ---
 
-BASE_DIR = Path.home() / "UADE" / "4to cuatrimestre"
-PROJECT_DIR = Path(__file__).parent
-DB_PATH = PROJECT_DIR / "data" / "downloads.db"
-WHISPER_MODEL = "mlx-community/whisper-medium"
-SUMMARY_MODEL = "sonnet"
+BASE_DIR = config.BASE_DIR
+DB_PATH = config.DB_PATH
 
 # Materia names for display (derived from folder names)
 MATERIA_DISPLAY = {
@@ -48,9 +44,15 @@ def init_db():
             txt_path    TEXT NOT NULL,
             summary_path TEXT,
             transcribed_at TEXT NOT NULL,
-            summarized_at TEXT
+            summarized_at TEXT,
+            context_hash TEXT
         )
     """)
+    # Migrar tabla vieja si falta la columna context_hash
+    try:
+        conn.execute("SELECT context_hash FROM transcriptions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE transcriptions ADD COLUMN context_hash TEXT")
     conn.commit()
     return conn
 
@@ -62,14 +64,32 @@ def is_transcribed(conn, mp4_path: str) -> bool:
     return row is not None
 
 
+def needs_resummarize(conn, mp4_path: str, current_hash: str) -> bool:
+    """Retorna True si el resumen necesita regenerarse (material cambio)."""
+    row = conn.execute(
+        "SELECT context_hash, summary_path FROM transcriptions WHERE mp4_path=?",
+        (mp4_path,)
+    ).fetchone()
+    if not row:
+        return False
+    old_hash, summary_path = row
+    if not summary_path:
+        return True  # nunca se resumio
+    if old_hash != current_hash:
+        return True  # material cambio
+    return False
+
+
 def record_transcription(conn, mp4_path: str, txt_path: str,
-                         summary_path: str | None = None):
+                         summary_path: str | None = None,
+                         context_hash: str | None = None):
     now = datetime.now().isoformat()
     conn.execute(
         """INSERT OR REPLACE INTO transcriptions
-           (mp4_path, txt_path, summary_path, transcribed_at, summarized_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (mp4_path, txt_path, summary_path, now, now if summary_path else None),
+           (mp4_path, txt_path, summary_path, transcribed_at, summarized_at, context_hash)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (mp4_path, txt_path, summary_path, now,
+         now if summary_path else None, context_hash),
     )
     conn.commit()
 
@@ -127,7 +147,7 @@ def find_mp4s() -> list[Path]:
     for materia_dir in sorted(BASE_DIR.iterdir()):
         if not materia_dir.is_dir():
             continue
-        grab_dir = materia_dir / "05_Grabaciones"
+        grab_dir = materia_dir / config.FOLDERS["grabacion"]
         if not grab_dir.exists():
             continue
         for mp4 in sorted(grab_dir.glob("*.mp4")):
@@ -156,6 +176,33 @@ def extract_date(mp4_path: Path) -> str | None:
     return None
 
 
+def compute_context_hash(materia_dir: Path, class_num: int | None) -> str:
+    """Compute hash of context files (slides + cronograma) for change detection."""
+    import hashlib
+    h = hashlib.md5()
+    material_dir = materia_dir / config.FOLDERS["material"]
+    extra_dir = materia_dir / config.FOLDERS["extra"]
+
+    # Hash slides de esta clase
+    if class_num and material_dir.exists():
+        prefix = f"CLASE_{class_num:02d}_"
+        for f in sorted(material_dir.iterdir()):
+            if f.name.startswith(prefix) and f.suffix.lower() in (".pdf", ".pptx", ".ppt", ".docx"):
+                h.update(f.name.encode())
+                h.update(str(f.stat().st_size).encode())
+                h.update(str(f.stat().st_mtime).encode())
+
+    # Hash cronograma
+    if extra_dir.exists():
+        for f in sorted(extra_dir.iterdir()):
+            if f.suffix.lower() == ".pdf" and ("3.4." in f.name or "cronograma" in f.name.lower()):
+                h.update(f.name.encode())
+                h.update(str(f.stat().st_size).encode())
+                h.update(str(f.stat().st_mtime).encode())
+
+    return h.hexdigest()
+
+
 def find_class_context(materia_dir: Path, class_num: int | None) -> dict:
     """Find contextual materials for a specific class.
 
@@ -169,9 +216,9 @@ def find_class_context(materia_dir: Path, class_num: int | None) -> dict:
         "materia_name": MATERIA_DISPLAY.get(materia_dir.name, materia_dir.name),
     }
 
-    material_dir = materia_dir / "01_Material_de_Clase"
-    extra_dir = materia_dir / "06_Material_Extra"
-    apuntes_dir = materia_dir / "02_Apuntes_Personales"
+    material_dir = materia_dir / config.FOLDERS["material"]
+    extra_dir = materia_dir / config.FOLDERS["extra"]
+    apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
 
     # 1. Slides for this specific class
     if class_num and material_dir.exists():
@@ -209,10 +256,40 @@ def find_class_context(materia_dir: Path, class_num: int | None) -> dict:
     return ctx
 
 
-def transcribe(mp4_path: Path, model: str = WHISPER_MODEL) -> str:
-    """Transcribe an mp4 file using mlx-whisper."""
+def assess_transcription_quality(text: str, mp4_path: Path) -> str | None:
+    """Analiza la calidad de la transcripcion. Retorna advertencia o None."""
+    issues = []
+
     size_mb = mp4_path.stat().st_size / (1024 * 1024)
-    log(f"  Transcribiendo: {mp4_path.name} ({size_mb:.0f} MB)")
+    chars_per_mb = len(text) / max(size_mb, 1)
+
+    # Ratio chars/MB muy bajo = poco contenido para el tamaño del video
+    # Una clase normal de 2hs (~400MB) genera ~80K-100K chars (~200+ chars/MB)
+    # Un audio malo o con mucho silencio genera mucho menos
+    if size_mb > 50 and chars_per_mb < 80:
+        issues.append(f"poco contenido transcripto para el tamaño del video ({chars_per_mb:.0f} chars/MB, normal: >150)")
+
+    # Repeticiones excesivas (señal de audio malo / eco / loop)
+    words = text.split()
+    if len(words) > 50:
+        repeats = 0
+        for i in range(2, len(words)):
+            if words[i] == words[i-1] == words[i-2] and len(words[i]) > 2:
+                repeats += 1
+        repeat_ratio = repeats / len(words)
+        if repeat_ratio > 0.02:
+            issues.append("repeticiones excesivas detectadas (posible audio con ruido o eco)")
+
+    if issues:
+        return "ADVERTENCIA: Calidad de audio baja — " + "; ".join(issues) + "."
+    return None
+
+
+def transcribe(mp4_path: Path, model: str = "") -> str:
+    """Transcribe an mp4 file using auto-detected Whisper backend."""
+    size_mb = mp4_path.stat().st_size / (1024 * 1024)
+    backend = config.detect_whisper_backend()
+    log(f"  Transcribiendo: {mp4_path.name} ({size_mb:.0f} MB) [{backend}]")
 
     # Heartbeat: print elapsed time every 30s so user knows it's alive
     stop_heartbeat = threading.Event()
@@ -229,12 +306,7 @@ def transcribe(mp4_path: Path, model: str = WHISPER_MODEL) -> str:
     hb.start()
 
     try:
-        result = mlx_whisper.transcribe(
-            str(mp4_path),
-            path_or_hf_repo=model,
-            language="es",
-            verbose=False,
-        )
+        text = config.transcribe_audio(str(mp4_path), model=model)
     finally:
         stop_heartbeat.set()
         hb.join(timeout=1)
@@ -243,12 +315,13 @@ def transcribe(mp4_path: Path, model: str = WHISPER_MODEL) -> str:
     mins = int(elapsed.total_seconds() // 60)
     secs = int(elapsed.total_seconds() % 60)
     log(f"  Transcripción completada en {mins}m {secs}s")
-    return result["text"]
+    return text
 
 
 def summarize(transcript: str, mp4_path: Path, class_num: int | None,
-              class_date: str | None, ctx: dict) -> str:
-    """Generate a study-oriented class summary using Claude Code CLI."""
+              class_date: str | None, ctx: dict,
+              quality_warning: str | None = None) -> str:
+    """Generate a study-oriented class summary."""
 
     materia = ctx["materia_name"]
     clase_label = f"Clase {class_num}" if class_num else "Clase"
@@ -333,13 +406,10 @@ REGLAS:
 - El formato de tareas debe ser compatible con Obsidian Tasks
 - Sé completo pero no redundante"""
 
-    result = subprocess.run(
-        ["claude", "-p", "--model", SUMMARY_MODEL],
-        input=prompt, capture_output=True, text=True, timeout=600,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"claude CLI falló: {result.stderr.strip()}")
-    return result.stdout.strip()
+    summary = config.llm_complete(prompt)
+    if quality_warning:
+        summary = f"> **{quality_warning}**\n\n{summary}"
+    return summary
 
 
 # --- Main ---
@@ -349,7 +419,7 @@ def main():
     parser = argparse.ArgumentParser(description="Transcribe UADE class recordings")
     parser.add_argument("--no-summary", action="store_true",
                         help="Solo transcribir, sin resumen")
-    parser.add_argument("--model", type=str, default=WHISPER_MODEL,
+    parser.add_argument("--model", type=str, default="",
                         help="Modelo whisper (default: medium)")
     parser.add_argument("--file", type=str,
                         help="Procesar solo este archivo .mp4")
@@ -365,12 +435,21 @@ def main():
 
     if not mp4s:
         log("No hay .mp4 pendientes de transcripción.")
+        # Mostrar status actual
+        show_pipeline_status()
         return
 
     log(f"Encontrados {len(mp4s)} videos pendientes")
 
+    # Auto-detectar si hay LLM disponible para resumenes
+    skip_summary = args.no_summary
+    if not skip_summary and not config.has_llm():
+        log("AVISO: No hay LLM configurado. Solo se hara transcripcion (sin resumenes).")
+        log("  Para resumenes, configurar: Claude Code, GEMINI_API_KEY, u Ollama.")
+        skip_summary = True
+
     # Thread pool for summarization (runs in parallel with next transcription)
-    executor = ThreadPoolExecutor(max_workers=1) if not args.no_summary else None
+    executor = ThreadPoolExecutor(max_workers=1) if not skip_summary else None
     pending_summary: Future | None = None
 
     def wait_pending_summary():
@@ -383,7 +462,8 @@ def main():
             log(f"  ERROR en resumen pendiente: {e}")
         pending_summary = None
 
-    def submit_summary(text, mp4, mp4_path_str, txt_path, summary_path, materia_dir):
+    def submit_summary(text, mp4, mp4_path_str, txt_path, summary_path, materia_dir,
+                       is_regen=False):
         nonlocal pending_summary
         wait_pending_summary()
 
@@ -391,15 +471,22 @@ def main():
         class_date = extract_date(mp4)
 
         def _do_summary():
-            log(f"  Recopilando contexto para {mp4.name}...")
+            label = "Regenerando" if is_regen else "Recopilando contexto para"
+            log(f"  {label} {mp4.name}...")
             ctx = find_class_context(materia_dir, class_num)
+            ctx_hash = compute_context_hash(materia_dir, class_num)
             parts = [k for k in ("slides", "cronograma", "prev_summary") if ctx[k]]
             log(f"  Contexto: {', '.join(parts) if parts else 'solo transcripción'}")
-            log(f"  Generando resumen con {SUMMARY_MODEL}...")
-            summary = summarize(text, mp4, class_num, class_date, ctx)
+            quality_warn = assess_transcription_quality(text, mp4)
+            if quality_warn:
+                log(f"  {quality_warn}")
+            log(f"  Generando resumen con {config.detect_llm_provider()}...")
+            summary = summarize(text, mp4, class_num, class_date, ctx,
+                                quality_warning=quality_warn)
             summary_path.write_text(summary, encoding="utf-8")
             log(f"  OK: {summary_path.name}")
-            record_transcription(conn, mp4_path_str, str(txt_path), str(summary_path))
+            record_transcription(conn, mp4_path_str, str(txt_path),
+                                 str(summary_path), context_hash=ctx_hash)
 
         pending_summary = executor.submit(_do_summary)
 
@@ -410,7 +497,7 @@ def main():
 
         txt_path = mp4.with_suffix(".txt")
         materia_dir = mp4.parent.parent
-        apuntes_dir = materia_dir / "02_Apuntes_Personales"
+        apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
         apuntes_dir.mkdir(parents=True, exist_ok=True)
         summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
 
@@ -428,16 +515,103 @@ def main():
         record_transcription(conn, str(mp4), str(txt_path))
 
         # Summarize (network — runs in parallel with next transcription)
-        if not args.no_summary and executor:
+        if not skip_summary and executor:
             submit_summary(text, mp4, str(mp4), txt_path, summary_path, materia_dir)
 
     # Wait for last summary
     wait_pending_summary()
+
+    # Check for stale summaries (material changed since last summary)
+    if not skip_summary and executor:
+        stale_count = 0
+        for materia_dir in sorted(BASE_DIR.iterdir()):
+            if not materia_dir.is_dir():
+                continue
+            grab_dir = materia_dir / config.FOLDERS["grabacion"]
+            if not grab_dir.exists():
+                continue
+            for mp4 in sorted(grab_dir.glob("*.mp4")):
+                txt_path = mp4.with_suffix(".txt")
+                if not txt_path.exists():
+                    continue
+                class_num = extract_class_num(mp4)
+                ctx_hash = compute_context_hash(materia_dir, class_num)
+                if needs_resummarize(conn, str(mp4), ctx_hash):
+                    stale_count += 1
+                    apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
+                    apuntes_dir.mkdir(parents=True, exist_ok=True)
+                    summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
+                    text = txt_path.read_text(encoding="utf-8")
+                    log(f"  Material nuevo detectado para {mp4.name}")
+                    submit_summary(text, mp4, str(mp4), txt_path, summary_path,
+                                   materia_dir, is_regen=True)
+        if stale_count:
+            wait_pending_summary()
+            log(f"  {stale_count} resumenes regenerados por cambio de material")
+
     if executor:
         executor.shutdown(wait=True)
 
     conn.close()
+
+    # Consolidar tareas de todos los resumenes
+    if not skip_summary:
+        consolidate_tasks()
+
+    show_pipeline_status()
     log("Listo.")
+
+
+def show_pipeline_status():
+    """Muestra un resumen del estado del pipeline."""
+    total_mp4 = 0
+    total_txt = 0
+    total_resumen = 0
+    for materia_dir in sorted(BASE_DIR.iterdir()):
+        if not materia_dir.is_dir():
+            continue
+        grab_dir = materia_dir / config.FOLDERS["grabacion"]
+        apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
+        if grab_dir.exists():
+            mp4s = list(grab_dir.glob("*.mp4"))
+            txts = list(grab_dir.glob("*.txt"))
+            total_mp4 += len(mp4s)
+            total_txt += len(txts)
+        if apuntes_dir.exists():
+            resums = list(apuntes_dir.glob("*_resumen.md"))
+            total_resumen += len(resums)
+    log(f"  Estado: {total_mp4} grabaciones, {total_txt} transcripciones, {total_resumen} resumenes")
+
+
+def consolidate_tasks():
+    """Parsea todos los _resumen.md y genera un tareas.md por materia."""
+    import re as _re
+    task_pattern = _re.compile(r'^- \[ \] .+', _re.MULTILINE)
+
+    for materia_dir in sorted(BASE_DIR.iterdir()):
+        if not materia_dir.is_dir():
+            continue
+        apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
+        if not apuntes_dir.exists():
+            continue
+
+        all_tasks = []
+        for resumen in sorted(apuntes_dir.glob("*_resumen.md")):
+            text = resumen.read_text(encoding="utf-8")
+            tasks = task_pattern.findall(text)
+            if tasks:
+                clase_name = resumen.stem.replace("_resumen", "")
+                all_tasks.append(f"### {clase_name}\n")
+                all_tasks.extend(tasks)
+                all_tasks.append("")
+
+        if all_tasks:
+            tareas_path = materia_dir / "tareas.md"
+            content = f"# Tareas — {materia_dir.name}\n\n"
+            content += "Generado automaticamente por el pipeline.\n\n"
+            content += "\n".join(all_tasks) + "\n"
+            tareas_path.write_text(content, encoding="utf-8")
+            log(f"  Tareas consolidadas: {tareas_path.name} ({len([t for t in all_tasks if t.startswith('- [ ]')])} tareas)")
 
 
 if __name__ == "__main__":

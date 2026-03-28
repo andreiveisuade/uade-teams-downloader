@@ -1,0 +1,2 @@
+# macOS Apple Silicon — transcripcion optimizada para GPU Metal
+mlx-whisper>=0.4

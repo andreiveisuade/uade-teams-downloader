@@ -5,6 +5,7 @@ Uses Playwright for auth only, then SharePoint REST API for listing/downloading.
 """
 
 import argparse
+import platform
 import random
 import re
 import sqlite3
@@ -18,12 +19,14 @@ from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
 # --- Config ---
 
+import config as cfg
+
 TEAM_PREFIXES = ["568898", "561218", "558193", "562914"]
-BASE_DIR = Path.home() / "UADE" / "4to cuatrimestre"
-PROJECT_DIR = Path(__file__).parent
+BASE_DIR = cfg.BASE_DIR
+PROJECT_DIR = cfg.PROJECT_DIR
 DATA_DIR = PROJECT_DIR / "data"
 SESSION_DIR = DATA_DIR / "session"
-DB_PATH = DATA_DIR / "downloads.db"
+DB_PATH = cfg.DB_PATH
 SP_TENANT = "uadeeduar"
 SP_BASE = f"https://{SP_TENANT}.sharepoint.com"
 MAX_DOWNLOADS_PER_RUN = 50
@@ -233,7 +236,9 @@ def get_sp_session(context) -> requests.Session:
         session.cookies.set(c["name"], c["value"], domain=c["domain"])
     session.headers.update({
         "Accept": "application/json;odata=verbose",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            if platform.system() == "Windows"
+            else "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
     return session
 
@@ -492,11 +497,13 @@ def main():
 
             if not ensure_logged_in(page):
                 if headless:
-                    log_err("Sesión expirada en modo headless.")
-                    log_err("Corré: python3 downloader.py --visible")
+                    log_warn("Sesión expirada. Reabriendo browser para login manual...")
                     context.close()
-                    import sys
-                    sys.exit(2)
+                    headless = False
+                    _headless_mode = False
+                    context, page = launch_browser(pw, headless=False)
+                    page.goto("https://teams.microsoft.com", wait_until="domcontentloaded")
+                    human_delay(3, 5)
                 wait_for_manual_login(page)
             else:
                 log_ok("Sesión activa")
