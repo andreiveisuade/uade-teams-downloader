@@ -7,12 +7,12 @@ applying naming conventions from the prompt 05 system.
 
 import re
 import shutil
-from datetime import datetime
 from pathlib import Path
 
 import config
 import db
 from backends import llm as llm_backend
+from logger import log
 
 # --- Config ---
 
@@ -154,11 +154,6 @@ def _clean_name(name: str, suffix: str) -> str:
 # --- Helpers ---
 
 
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
-
-
 def should_skip(path: Path) -> bool:
     """Skip Student Work, hidden files, etc."""
     if path.name in SKIP_FILES:
@@ -254,7 +249,7 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(f), str(dest))
-            record_organized(conn, source_key, str(dest), category)
+            db.record_organized(conn, source_key, str(dest), category)
             log(f"  + {f.name} → {DEST_FOLDERS[category]}/{new_name}")
             moved += 1
 
@@ -262,7 +257,7 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
     dupes_removed = 0
     for f in sorted(teams_dir.rglob("*"), reverse=True):
         if f.is_file() and not should_skip(f):
-            if is_organized(conn, str(f)):
+            if db.is_organized(conn, str(f)):
                 continue
             # Archivo duplicado de SharePoint (misma data, path más largo)
             # Si ya se movió el original, este es la copia espejo

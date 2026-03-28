@@ -8,7 +8,6 @@ import argparse
 import platform
 import random
 import re
-import sqlite3
 import time
 import urllib.parse
 from datetime import datetime
@@ -148,16 +147,7 @@ def human_delay(lo: float = 1.0, hi: float = 3.0):
         time.sleep(random.uniform(lo, hi))
 
 
-def log(msg: str, level: str = "INFO"):
-    ts = datetime.now().strftime('%H:%M:%S')
-    prefix = {"INFO": "   ", "OK": " + ", "WARN": " ! ", "ERR": "!! ", "STEP": ">>"}
-    print(f"[{ts}]{prefix.get(level, '   ')} {msg}")
-
-
-def log_step(msg): log(msg, "STEP")
-def log_ok(msg): log(msg, "OK")
-def log_warn(msg): log(msg, "WARN")
-def log_err(msg): log(msg, "ERR")
+from logger import log, log_step, log_ok, log_warn, log_err
 
 
 # --- Browser / Auth ---
@@ -304,13 +294,9 @@ def sp_download_file(session: requests.Session, site_url: str, file_url: str, de
             resp = session.get(download_url, stream=True, timeout=300)
             resp.raise_for_status()
 
-            total = int(resp.headers.get("Content-Length", 0))
-            downloaded = 0
-
             with open(tmp_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
-                    downloaded += len(chunk)
 
             if not tmp_path.exists() or tmp_path.stat().st_size == 0:
                 raise RuntimeError("Archivo vacío")

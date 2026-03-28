@@ -17,6 +17,7 @@ import config
 import db
 from backends import whisper as whisper_backend
 from backends import llm as llm_backend
+from logger import log, log_warn
 import tasks
 
 # --- Config ---
@@ -29,11 +30,6 @@ MATERIA_DISPLAY = {
     "Desarrollo_de_Aplicaciones": "Desarrollo de Aplicaciones I",
     "Ingenieria_de_Datos_II": "Ingeniería de Datos II",
 }
-
-
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
 
 
 # --- Text extraction ---

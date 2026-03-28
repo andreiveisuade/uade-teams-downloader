@@ -6,10 +6,12 @@ Shows the state of each file across download → organize → transcribe stages.
 
 import argparse
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "data" / "downloads.db"
+import config
+from logger import log
+
+DB_PATH = config.DB_PATH
 
 VIEW_SQL = """
 CREATE VIEW IF NOT EXISTS file_status AS
@@ -43,9 +45,7 @@ WHERE d.rn = 1
 """
 
 
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
+
 
 
 def ensure_view(conn):
@@ -87,7 +87,7 @@ def cmd_mp4(conn):
     print(f"Grabaciones ({len(rows)}):\n")
     for fname, status, org, txt, summary in rows:
         marks = []
-        marks.append("DL" if True else "  ")
+        marks.append("DL")
         marks.append("ORG" if org else "   ")
         marks.append("TXT" if txt else "   ")
         marks.append("RES" if summary else "   ")
