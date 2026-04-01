@@ -91,10 +91,15 @@ Te guia paso a paso (igual que en Windows).
 
 ## Carpeta destino
 
-Durante el setup te pregunta donde guardar los archivos. Por defecto es `~/UADE`. El pipeline crea una subcarpeta por cada materia automaticamente, no hace falta crearlas a mano:
+Durante el setup te pregunta donde guardar los archivos. El default es una carpeta `UADE` dentro de tu carpeta de usuario:
+
+- **Windows:** `C:\Users\TuUsuario\UADE`
+- **macOS:** `/Users/TuUsuario/UADE`
+
+Podes escribir cualquier ruta que quieras (ej: `D:\Facultad`, `C:\Users\Juan\Desktop\UADE`, etc). El pipeline crea las subcarpetas por materia automaticamente:
 
 ```
-~/UADE/
+UADE/
 ├── Nombre_Materia_1/
 │   ├── 01_Material_de_Clase/    slides, PDFs
 │   ├── 02_Apuntes_Personales/   resumenes generados
@@ -107,7 +112,7 @@ Durante el setup te pregunta donde guardar los archivos. Por defecto es `~/UADE`
 │   └── ...
 ```
 
-Si queres cambiar la carpeta despues, editar `UADE_BASE_DIR` en el archivo `.env`.
+Si queres cambiar la carpeta despues del setup, editar `UADE_BASE_DIR` en el archivo `.env`.
 
 ## Que hace el pipeline
 
@@ -174,7 +179,7 @@ Todo se configura en el archivo `.env` (se crea durante el setup). Variables dis
 
 | Variable | Para que sirve | Default |
 |----------|---------------|---------|
-| `UADE_BASE_DIR` | Carpeta destino | `~/UADE` |
+| `UADE_BASE_DIR` | Carpeta destino | `UADE` en tu carpeta de usuario |
 | `TEAM_PREFIXES` | IDs de equipos (coma separados) | — |
 | `GEMINI_API_KEY` | API key para resumenes | — |
 | `WHISPER_BACKEND` | `mlx` o `openai-whisper` | Auto-detecta |
