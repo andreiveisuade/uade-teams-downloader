@@ -55,13 +55,24 @@ def complete(prompt: str, model: str = "") -> str:
 
     if provider == "claude-cli":
         model = model or os.getenv("LLM_MODEL", "sonnet")
-        result = subprocess.run(
-            ["claude", "-p", "--model", model],
-            input=prompt, capture_output=True, text=True, timeout=600,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"claude CLI fallo: {result.stderr.strip()}")
-        return result.stdout.strip()
+        try:
+            result = subprocess.run(
+                ["claude", "-p", "--model", model],
+                input=prompt, capture_output=True, text=True, timeout=900,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"claude CLI fallo: {result.stderr.strip()}")
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            if model != "haiku":
+                result = subprocess.run(
+                    ["claude", "-p", "--model", "haiku"],
+                    input=prompt, capture_output=True, text=True, timeout=900,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"claude CLI fallo (haiku retry): {result.stderr.strip()}")
+                return result.stdout.strip()
+            raise
 
     elif provider == "gemini":
         import google.generativeai as genai

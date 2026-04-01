@@ -1,177 +1,178 @@
 # UADE Teams Downloader
 
-Pipeline automatico que descarga material de Microsoft Teams, organiza en carpetas, transcribe grabaciones con Whisper y genera resumenes con IA.
+Descarga automaticamente el material de tus materias de Teams: grabaciones, slides, PDFs. Los organiza en carpetas, transcribe las clases con Whisper (local, no sube nada) y genera resumenes con IA.
 
-Funciona en macOS, Windows y Linux.
+## Guia de instalacion — Windows
 
-## Que hace
+### Paso 1: Instalar Git
 
-1. **Descarga** grabaciones, slides y material de Teams/SharePoint
-2. **Organiza** los archivos en carpetas estandarizadas por materia
-3. **Transcribe** las grabaciones de clase con Whisper (100% local)
-4. **Genera resumenes** estructurados con IA (temas, conceptos clave, citas del profesor)
-5. **Extrae tareas** y las consolida en un archivo `tareas.md` por materia
+Git es lo que te permite descargar este programa.
+
+1. Ir a https://gitforwindows.org
+2. Descargar e instalar con las opciones por defecto (Next, Next, Next...)
+
+### Paso 2: Instalar Python
+
+1. Ir a https://www.python.org/downloads/
+2. Descargar e instalar
+3. **MUY IMPORTANTE:** en la primera pantalla del instalador, marcar la casilla **"Add Python to PATH"** antes de hacer click en Install
+
+### Paso 3: Descargar este programa
+
+Abrir una terminal (buscar "cmd" en el menu Inicio) y escribir:
 
 ```
-Teams/SharePoint
-    → downloader.py (descarga)
-    → organizer.py (clasifica en carpetas)
-    → transcriber.py (Whisper + LLM)
-    → status.py (reporte)
+git clone https://github.com/andreiveisuade/uade-teams-downloader.git
 ```
 
-## Instalacion
+### Paso 4: Correr el setup
 
-### Opcion A: Setup guiado (recomendado)
+En el Explorador de archivos, ir a la carpeta `uade-teams-downloader` que se acaba de crear, y **doble click en `setup.bat`**.
+
+El setup te va a guiar paso a paso:
+- Te pregunta donde guardar los archivos (Enter para aceptar el default)
+- Instala las dependencias automaticamente (tarda unos minutos, vas a ver puntitos de progreso)
+- Te pide una API key de Google para los resumenes (es gratis, te explica como obtenerla)
+- Te pide los IDs de tus equipos de Teams (te explica donde encontrarlos)
+- Te pide loguearte en Teams en un browser que se abre solo
+
+### Paso 5: Uso diario
+
+Cada vez que quieras descargar material nuevo, **doble click en `run-pipeline.bat`**.
+
+Se abre una ventana que muestra el progreso. Cuando termina, tus archivos estan organizados en la carpeta que elegiste.
+
+---
+
+## Guia de instalacion — macOS
+
+### Paso 1: Instalar herramientas
+
+Abrir la Terminal y correr:
+
+```bash
+xcode-select --install
+```
+
+Esto instala Git y herramientas de desarrollo. Si ya las tenes, te va a decir.
+
+### Paso 2: Verificar Python
+
+macOS viene con Python. Verificar que es 3.10+:
+
+```bash
+python3 --version
+```
+
+Si es menor a 3.10: `brew install python`.
+
+### Paso 3: Descargar este programa
 
 ```bash
 git clone https://github.com/andreiveisuade/uade-teams-downloader.git
 cd uade-teams-downloader
-python setup.py
 ```
 
-El setup pregunta paso a paso: carpeta destino, API key para resumenes, IDs de equipos de Teams, y login.
-
-### Opcion B: Instalacion manual
-
-**1. Clonar y crear entorno virtual:**
+### Paso 4: Correr el setup
 
 ```bash
-git clone https://github.com/andreiveisuade/uade-teams-downloader.git
-cd uade-teams-downloader
-python -m venv .venv
+python3 setup.py
 ```
 
-**2. Activar el entorno virtual:**
+Te guia paso a paso (igual que en Windows).
+
+### Paso 5: Uso diario
 
 ```bash
-# macOS / Linux:
-source .venv/bin/activate
-
-# Windows:
-.venv\Scripts\activate.bat
+./run-pipeline.sh
 ```
 
-**3. Instalar dependencias base:**
+---
 
-```bash
-pip install -r requirements.txt
-playwright install chromium
-```
+## Que hace el pipeline
 
-**4. Instalar Whisper (transcripcion):**
+Cada vez que lo corres:
 
-```bash
-# macOS Apple Silicon:
-pip install -r requirements-mlx.txt
+1. **Descarga** archivos nuevos de Teams (grabaciones, slides, PDFs)
+2. **Organiza** todo en carpetas por materia
+3. **Transcribe** las grabaciones de clase (100% local, no sube audio)
+4. **Genera resumenes** con temas, conceptos clave, y citas del profesor
+5. **Extrae tareas** y deadlines a un archivo `tareas.md`
 
-# Windows o Linux:
-pip install -r requirements-whisper.txt
-```
-
-**5. Configurar IA para resumenes (elegir una opcion):**
-
-| Opcion | Comando | Costo |
-|--------|---------|-------|
-| Google Gemini | `pip install -r requirements-gemini.txt` | Gratis |
-| Claude Code | Instalar desde https://claude.ai/code | Suscripcion |
-| Ollama | Instalar desde https://ollama.ai | Gratis (local) |
-
-Para Gemini, obtener API key gratis en https://aistudio.google.com y agregarla al archivo `.env`:
-
-```bash
-cp .env.template .env
-# Editar .env y poner la API key en GEMINI_API_KEY=
-```
-
-Sin LLM configurado, el sistema descarga y transcribe pero no genera resumenes.
-
-**6. Configurar equipos de Teams:**
-
-Agregar los IDs de tus equipos al archivo `.env`:
-
-```
-TEAM_PREFIXES=568898,561218,558193
-```
-
-Para encontrar los IDs: abrir Teams en el browser, entrar a un equipo, y buscar el numero en la URL (`...Section_XXXXXX/...`).
-
-**7. Login en Teams (primera vez):**
-
-```bash
-python downloader.py --visible
-```
-
-Se abre un browser. Loguearse con la cuenta de UADE. La sesion se guarda y dura ~30 dias. Si expira, el sistema reabre el browser automaticamente.
-
-## Uso diario
-
-```bash
-# Activar el entorno:
-source .venv/bin/activate          # macOS/Linux
-# .venv\Scripts\activate.bat       # Windows
-
-# Correr el pipeline completo:
-./run-pipeline.sh                  # macOS/Linux
-run-pipeline.bat                   # Windows
-```
-
-El pipeline descarga archivos nuevos, los organiza, transcribe grabaciones pendientes y genera resumenes. Correr multiples veces es seguro: solo procesa lo nuevo.
-
-### Comandos individuales
-
-```bash
-python downloader.py                  # Descargar todo
-python downloader.py --team 568898    # Solo una materia
-python organizer.py                   # Organizar archivos
-python organizer.py --dry-run         # Ver que haria sin mover
-python transcriber.py                 # Transcribir + resumir
-python transcriber.py --no-summary    # Solo transcribir
-python transcriber.py --file video.mp4  # Solo un archivo
-python status.py                      # Estado general
-python status.py --mp4                # Ciclo de vida de grabaciones
-python status.py --pending            # Que falta procesar
-```
+Es seguro correrlo varias veces: solo procesa lo nuevo.
 
 ## Estructura de carpetas
-
-Al correr el pipeline, cada materia se organiza asi (las carpetas se crean solas):
 
 ```
 ~/UADE/4to cuatrimestre/Nombre_Materia/
 ├── 01_Material_de_Clase/    slides, PDFs de clase
-├── 02_Apuntes_Personales/   resumenes generados por el pipeline
+├── 02_Apuntes_Personales/   resumenes generados
 ├── 03_Trabajos_Practicos/   ejercicios y TPs
 ├── 04_Evaluaciones/         parciales y finales
-├── 05_Grabaciones/          videos de clase + transcripciones .txt
+├── 05_Grabaciones/          videos + transcripciones .txt
 ├── 06_Material_Extra/       cronogramas, bibliografia
-└── tareas.md                tareas consolidadas de todas las clases
+└── tareas.md                tareas de todas las clases
 ```
 
-## Configuracion
+## Como encontrar los IDs de tus equipos de Teams
 
-Todo se configura en el archivo `.env` (copiar desde `.env.template`). Sin `.env`, el sistema usa defaults y auto-detecta lo que puede.
+1. Abrir Teams **en el browser** (teams.microsoft.com)
+2. Entrar a un equipo/materia
+3. Mirar la URL. Vas a ver algo asi:
+
+```
+https://teams.microsoft.com/.../Section_568898/...
+                                       ^^^^^^
+```
+
+4. Ese numero (ej: `568898`) es el ID del equipo
+5. Repetir para cada materia
+
+## Configuracion avanzada
+
+Todo se configura en el archivo `.env` (se crea durante el setup). Variables disponibles:
 
 | Variable | Para que sirve | Default |
 |----------|---------------|---------|
-| `UADE_BASE_DIR` | Carpeta donde estan las materias | `~/UADE/4to cuatrimestre` |
-| `TEAM_PREFIXES` | IDs de equipos de Teams (separados por coma) | — |
-| `GEMINI_API_KEY` | API key de Google AI Studio para resumenes | — |
-| `WHISPER_BACKEND` | Forzar backend: `mlx` o `openai-whisper` | Auto-detecta |
-| `LLM_PROVIDER` | Forzar LLM: `claude-cli`, `gemini`, `ollama` | Auto-detecta |
+| `UADE_BASE_DIR` | Carpeta destino | `~/UADE/4to cuatrimestre` |
+| `TEAM_PREFIXES` | IDs de equipos (coma separados) | — |
+| `GEMINI_API_KEY` | API key para resumenes | — |
+| `WHISPER_BACKEND` | `mlx` o `openai-whisper` | Auto-detecta |
+| `LLM_PROVIDER` | `claude-cli`, `gemini`, `ollama` | Auto-detecta |
 
-## Seguridad
+## Problemas comunes
 
-- Las credenciales de Teams nunca se guardan como texto. La sesion usa cookies del browser almacenadas localmente (gitignored).
-- Las API keys se leen del archivo `.env` (gitignored). No estan en el codigo.
-- Whisper corre local. El audio no se envia a ningun servidor externo.
-- Los resumenes se envian a la API del LLM elegido (Claude, Gemini, u Ollama local).
-
-## Troubleshooting
+### Windows
 
 | Problema | Solucion |
 |----------|----------|
-| "Sesion expirada" | El sistema reabre el browser solo. Si no, correr `python downloader.py --visible` |
-| No genera resumenes | Verificar que hay un LLM configurado (`python -c "import config; print(config.detect_llm_provider())"`) |
-| Transcripcion lenta | Sin GPU tarda ~30-60 min por clase. Con GPU (CUDA o Metal) ~5 min |
-| Resumen sin contexto | Verificar que las slides esten en `01_Material_de_Clase/` con prefijo `CLASE_XX_` |
+| `python` no se reconoce | Reinstalar Python marcando **"Add Python to PATH"** |
+| Se abre Microsoft Store | Configuracion > Apps > Alias de ejecucion de apps > desactivar Python |
+| Sesion expirada | Doble click en `uade-login.bat` para loguearte de nuevo |
+| Error desconocido | Abrir el archivo de log que indica al final y enviar el contenido |
+
+### macOS
+
+| Problema | Solucion |
+|----------|----------|
+| Sesion expirada | Correr `./uade-login.sh` o el pipeline la renueva solo |
+| Transcripcion lenta | Sin GPU tarda ~30-60 min por clase. Con Apple Silicon ~5 min |
+| No genera resumenes | Verificar LLM: `python3 -c "from backends import llm; print(llm.detect())"` |
+
+### General
+
+| Problema | Solucion |
+|----------|----------|
+| "No hay equipos configurados" | Correr `setup.bat` (Windows) o `python3 setup.py` (macOS) |
+| Resumen sin contexto de slides | Las slides deben estar en `01_Material_de_Clase/` con prefijo `CLASE_XX_` |
+
+## Actualizar
+
+```bash
+cd uade-teams-downloader
+git pull
+```
+
+---
+
+Hecho por [Andrei Veis](https://github.com/andreiveisuade) — UADE 2026

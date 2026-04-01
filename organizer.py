@@ -127,10 +127,11 @@ Respondé SOLO con el nombre de la categoría, una palabra, sin explicación."""
         category = llm_backend.complete_fast(prompt).strip().lower()
         if category in DEST_FOLDERS:
             return category, _clean_name(path.name, path.suffix) + path.suffix
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"    No se pudo clasificar {path.name} con LLM ({e}). Moviendo a extra/")
 
     # Ultimate fallback
+    log(f"    {path.name} -> extra/ (clasificacion automatica)")
     return "extra", _clean_name(path.name, path.suffix) + path.suffix
 
 

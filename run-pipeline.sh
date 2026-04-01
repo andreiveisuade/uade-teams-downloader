@@ -5,6 +5,9 @@
 
 set -uo pipefail
 
+# Asegurar PATH completo (launchd no hereda el PATH del usuario)
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PROJECT_DIR/data/logs"
 mkdir -p "$LOG_DIR"
@@ -95,6 +98,10 @@ run_step() {
                     printf "\r%70s\r" " "
                     echo -e "  ${DIM}${line#*] }${RESET}"
                     ;;
+                *"ERROR"*|*"!! "*)
+                    printf "\r%70s\r" " "
+                    echo -e "  ${RED}${line#*] }${RESET}"
+                    ;;
                 *"SKIP"*|*"skip"*|*"Listando"*|*"archivo:"*|*"carpeta:"*|*"Crawleando"*|*"Library:"*|*"Discovering"*)
                     # Solo al log, no mostrar
                     ;;
@@ -168,20 +175,29 @@ run_pipeline() {
         warn "Continuando con material existente..."
     fi
 
+    local had_errors=false
+
     # Paso 2: Organizar
     step 2 4 "Organización de archivos"
     run_step "Organizando archivos" python3 -u organizer.py
-    ok "Organización completada"
+    ORG_EXIT=$?
+    if [ $ORG_EXIT -eq 0 ]; then
+        ok "Organización completada"
+    else
+        err "Organización falló (exit $ORG_EXIT)"
+        had_errors=true
+    fi
 
     # Paso 3: Transcribir + Resumir
     step 3 4 "Transcripción + Resúmenes"
-    if command -v claude &>/dev/null; then
-        run_step "Transcribiendo y generando resúmenes" python3 -u transcriber.py
+    run_step "Transcribiendo y generando resúmenes" python3 -u transcriber.py
+    TR_EXIT=$?
+    if [ $TR_EXIT -eq 0 ]; then
+        ok "Transcripción completada"
     else
-        warn "claude CLI no disponible, sin resúmenes"
-        run_step "Transcribiendo (sin resúmenes)" python3 -u transcriber.py --no-summary
+        err "Transcripción falló (exit $TR_EXIT)"
+        had_errors=true
     fi
-    ok "Transcripción completada"
 
     # Paso 4: Status
     step 4 4 "Estado del pipeline"
@@ -192,6 +208,13 @@ run_pipeline() {
     local mins=$(( elapsed / 60 ))
     local secs=$(( elapsed % 60 ))
     header "Pipeline completado — ${mins}m ${secs}s"
+
+    if $had_errors; then
+        echo ""
+        warn "Hubo errores durante el pipeline."
+        warn "Log completo en: $LOGFILE"
+        warn "Si necesitas ayuda, copia el contenido del log y envialo."
+    fi
 }
 
 run_pipeline

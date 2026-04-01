@@ -8,6 +8,7 @@ import argparse
 import platform
 import random
 import re
+import sys
 import time
 import urllib.parse
 from datetime import datetime
@@ -185,15 +186,18 @@ def ensure_logged_in(page) -> bool:
 
 
 def wait_for_manual_login(page):
-    log_step("ESPERANDO LOGIN MANUAL — logueate en el browser")
+    log_step("ESPERANDO LOGIN — logueate en el browser que se abrio")
     deadline = time.time() + 300
     while time.time() < deadline:
+        remaining = int(deadline - time.time())
+        if remaining % 30 == 0 and remaining > 0 and remaining < 300:
+            log(f"  Esperando login... {remaining // 60}m {remaining % 60}s restantes")
         if _is_teams_loaded(page):
-            log_ok("Login detectado")
+            log_ok("Login detectado correctamente")
             human_delay(3, 5)
             return
         time.sleep(3)
-    raise RuntimeError("Timeout esperando login (5 min)")
+    raise RuntimeError("Timeout: no se detecto login en 5 minutos. Intentar de nuevo.")
 
 
 def get_sp_session(context) -> requests.Session:
@@ -307,7 +311,7 @@ def sp_download_file(session: requests.Session, site_url: str, file_url: str, de
             return True
 
         except Exception as e:
-            err = str(e).split("\n")[0][:120]
+            err = str(e).split("\n")[0]
             log_err(f"    Intento {attempt}/{MAX_RETRIES}: {err}")
             if tmp_path.exists():
                 tmp_path.unlink()
@@ -343,7 +347,7 @@ def crawl_folder(
     try:
         items = sp_list_folder(session, site_url, folder_path)
     except Exception as e:
-        log_err(f"Error listando {folder_path}: {str(e)[:100]}")
+        log_err(f"Error listando {folder_path}: {e}")
         return
 
     folders = [i for i in items if i["is_folder"]]
@@ -432,6 +436,10 @@ def main():
     args = parser.parse_args()
 
     prefixes = [args.team] if args.team else TEAM_PREFIXES
+    if not prefixes:
+        log_err("No hay equipos configurados.")
+        log("Correr 'python setup.py' o agregar TEAM_PREFIXES al archivo .env")
+        sys.exit(1)
     db = DownloadDB()
     global _headless_mode
     headless = not args.visible and has_session()
@@ -441,7 +449,9 @@ def main():
     print("=" * 60)
     print("  UADE Teams Downloader")
     print("=" * 60)
-    log(f"Modo: {'HEADLESS' if headless else 'VISIBLE'}")
+    if not headless and not args.visible:
+        log("Primera vez o sesion expirada — se va a abrir un browser para login")
+    log(f"Modo: {'automatico' if headless else 'con browser visible'}")
     log(f"Teams: {', '.join(prefixes)}")
     log(f"Destino: {BASE_DIR}")
     log(f"DB: {DB_PATH}")
@@ -491,8 +501,9 @@ def main():
             # Verify API access
             test_resp = sp_session.get(f"{SP_BASE}/sites/Section_{prefixes[0]}/_api/web/title")
             if test_resp.status_code != 200:
-                log_err(f"API de SharePoint no accesible (HTTP {test_resp.status_code})")
-                log("Probando re-auth...")
+                hint = {401: "(sesion expirada)", 403: "(sin permisos)", 404: "(team no encontrado)"}.get(test_resp.status_code, "")
+                log_err(f"API de SharePoint no accesible (HTTP {test_resp.status_code}) {hint}")
+                log("Probando re-autenticacion...")
                 page.goto(f"{SP_BASE}/sites/Section_{prefixes[0]}", wait_until="networkidle")
                 human_delay(5, 8)
                 sp_session = get_sp_session(context)
@@ -544,7 +555,7 @@ def main():
                     log_ok(f"Team {prefix} completado")
 
                 except Exception as e:
-                    log_err(f"Error en team {prefix}: {str(e)[:150]}")
+                    log_err(f"Error en team {prefix}: {e}")
 
                 if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
                     log_warn(f"Límite de descargas ({MAX_DOWNLOADS_PER_RUN})")

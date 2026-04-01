@@ -295,17 +295,16 @@ def main():
     conn = db.get_connection(check_same_thread=False)
 
     mp4s = [Path(args.file)] if args.file else find_mp4s()
-    if not mp4s:
-        log("No hay .mp4 pendientes de transcripcion.")
-        tasks.show_status(log)
-        return
-
-    log(f"Encontrados {len(mp4s)} videos pendientes")
 
     skip_summary = args.no_summary
     if not skip_summary and not llm_backend.is_available():
         log("AVISO: No hay LLM configurado. Solo transcripcion (sin resumenes).")
         skip_summary = True
+
+    if not mp4s:
+        log("No hay .mp4 pendientes de transcripcion.")
+    else:
+        log(f"Encontrados {len(mp4s)} videos pendientes")
 
     executor = ThreadPoolExecutor(max_workers=1) if not skip_summary else None
     pending_summary: Future | None = None
@@ -317,7 +316,7 @@ def main():
         try:
             pending_summary.result()
         except Exception as e:
-            log(f"  ERROR en resumen: {e}")
+            log(f"  ERROR generando resumen (se puede reintentar corriendo de nuevo): {e}")
         pending_summary = None
 
     def submit_summary(text, mp4, txt_path, summary_path, materia_dir, is_regen=False):
@@ -373,7 +372,7 @@ def main():
 
     wait_pending()
 
-    # Detectar resumenes stale (material cambio)
+    # Detectar resumenes faltantes o stale (material cambio)
     if not skip_summary and executor:
         stale = 0
         for materia_dir in sorted(BASE_DIR.iterdir()):
@@ -394,11 +393,11 @@ def main():
                     apuntes_dir.mkdir(parents=True, exist_ok=True)
                     summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
                     text = txt_path.read_text(encoding="utf-8")
-                    log(f"  Material nuevo detectado para {mp4.name}")
+                    log(f"  Resumen pendiente para {mp4.name}")
                     submit_summary(text, mp4, txt_path, summary_path, materia_dir, is_regen=True)
         if stale:
             wait_pending()
-            log(f"  {stale} resumenes regenerados por cambio de material")
+            log(f"  {stale} resumenes generados/regenerados")
 
     if executor:
         executor.shutdown(wait=True)

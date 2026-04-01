@@ -7,8 +7,10 @@ import os
 import platform
 
 import config
+from logger import log
 
 _backend = None
+_model_loaded = False
 
 
 def detect() -> str:
@@ -50,8 +52,13 @@ def transcribe(mp4_path: str, model: str = "", language: str = "") -> str:
     language = language or config.LANGUAGE
     backend = detect()
 
+    global _model_loaded
+
     if backend == "mlx":
         import mlx_whisper
+        if not _model_loaded:
+            log(f"  Cargando modelo Whisper '{model}' (la primera vez descarga ~1.5 GB, puede tardar)...")
+            _model_loaded = True
         result = mlx_whisper.transcribe(
             mp4_path,
             path_or_hf_repo=f"mlx-community/whisper-{model}",
@@ -62,7 +69,10 @@ def transcribe(mp4_path: str, model: str = "", language: str = "") -> str:
 
     elif backend == "openai-whisper":
         import whisper
+        if not _model_loaded:
+            log(f"  Cargando modelo Whisper '{model}' (la primera vez descarga ~1.5 GB, puede tardar)...")
         whisper_model = whisper.load_model(model)
+        _model_loaded = True
         result = whisper_model.transcribe(
             mp4_path, language=language, verbose=False, fp16=False,
         )

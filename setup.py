@@ -10,6 +10,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).parent
@@ -75,12 +76,43 @@ def run_quiet(cmd, **kwargs):
         return False
 
 
+def run_visible(cmd, label="", **kwargs):
+    """Corre un comando mostrando progreso con dots."""
+    if label:
+        print(f"  {label}", end="", flush=True)
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
+        )
+        dot_count = 0
+        while proc.poll() is None:
+            time.sleep(2)
+            if label:
+                print(".", end="", flush=True)
+                dot_count += 1
+        print()  # newline after dots
+        if proc.returncode != 0:
+            stderr = proc.stderr.read()
+            err(f"Fallo (exit {proc.returncode})")
+            if stderr:
+                for line in stderr.strip().split("\n")[:5]:
+                    print(f"    {line}")
+            return False
+        return True
+    except Exception as e:
+        print()
+        err(f"Error: {e}")
+        return False
+
+
 def main():
     print()
     print("=" * 55)
     print("  UADE Teams Downloader — Setup")
     print("=" * 55)
-    print(f"\n  Sistema: {SO} ({ARCH})")
+    os_name = {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(SO, SO)
+    arch_name = {"arm64": "Apple Silicon", "AMD64": "64-bit", "x86_64": "64-bit"}.get(ARCH, ARCH)
+    print(f"\n  Sistema: {os_name} ({arch_name})")
     print(f"  Python:  {sys.version.split()[0]}")
 
     if sys.version_info < (3, 10):
@@ -124,29 +156,32 @@ def main():
         ok("Entorno virtual ya existe")
 
     # Dependencias base
-    print("  Instalando dependencias base...")
-    if not run_quiet([pip_cmd(), "install", "-q", "-r",
-                      str(PROJECT_DIR / "requirements.txt")]):
+    if not run_visible([pip_cmd(), "install", "-q", "-r",
+                        str(PROJECT_DIR / "requirements.txt")],
+                       label="Instalando dependencias base"):
         return
+    ok("Dependencias base instaladas")
 
     # Whisper segun SO
     if SO == "Darwin" and ARCH == "arm64":
-        print("  macOS Apple Silicon detectado. Instalando mlx-whisper (GPU Metal)...")
         req_file = "requirements-mlx.txt"
+        label = "Instalando Whisper (GPU Metal)"
     else:
-        print("  Instalando OpenAI Whisper (esto puede tardar unos minutos)...")
         req_file = "requirements-whisper.txt"
+        label = "Instalando Whisper (puede tardar unos minutos)"
 
-    if not run_quiet([pip_cmd(), "install", "-q", "-r",
-                      str(PROJECT_DIR / req_file)]):
+    if not run_visible([pip_cmd(), "install", "-q", "-r",
+                        str(PROJECT_DIR / req_file)],
+                       label=label):
         warn("Whisper no se instalo. La transcripcion no va a funcionar.")
     else:
         ok("Whisper instalado")
 
     # Playwright + Chromium
-    print("  Instalando browser para descarga de Teams...")
-    if not run_quiet([python_cmd(), "-m", "playwright", "install", "chromium"]):
+    if not run_visible([python_cmd(), "-m", "playwright", "install", "chromium"],
+                       label="Instalando browser para Teams"):
         warn("Chromium no se instalo. La descarga de Teams no va a funcionar.")
+        warn("Intentar manualmente: playwright install chromium")
     else:
         ok("Chromium instalado")
 
@@ -193,13 +228,22 @@ def main():
             print("  5. Copiar la key que aparece")
             print()
             api_key = ask("Pegar la API key aca")
-            if api_key and len(api_key) > 10:
+            if api_key and api_key.startswith("AIza") and len(api_key) == 39:
                 env_lines.append(f"GEMINI_API_KEY={api_key}")
                 run_quiet([pip_cmd(), "install", "-q", "-r",
                            str(PROJECT_DIR / "requirements-gemini.txt")])
                 ok("Gemini configurado")
+            elif api_key:
+                warn("La API key no tiene el formato esperado (AIza... 39 chars).")
+                if ask_yn("Guardarla igual?", False):
+                    env_lines.append(f"GEMINI_API_KEY={api_key}")
+                    run_quiet([pip_cmd(), "install", "-q", "-r",
+                               str(PROJECT_DIR / "requirements-gemini.txt")])
+                    ok("Gemini configurado (key no verificada)")
+                else:
+                    warn("Continuando sin resumenes. Podes configurarlo en .env")
             else:
-                warn("API key invalida o vacia. Continuando sin resumenes.")
+                warn("API key vacia. Continuando sin resumenes.")
                 warn("Podes configurarlo despues editando el archivo .env")
         elif choice == "3":
             print("  1. Descargar Ollama desde https://ollama.ai")
@@ -229,6 +273,7 @@ def main():
     print("  4. Repetir para cada materia.")
     print()
 
+    has_teams = False
     if ask_yn("Tenes los IDs de tus equipos?", False):
         ids_input = ask("IDs separados por coma (ej: 568898,561218)")
         if ids_input:
@@ -236,9 +281,13 @@ def main():
             if ids:
                 env_lines.append(f"TEAM_PREFIXES={','.join(ids)}")
                 ok(f"Equipos configurados: {', '.join(ids)}")
-    else:
-        print("  No hay problema. Cuando los tengas, agregarlos al archivo .env:")
-        print(f"  TEAM_PREFIXES=id1,id2,id3")
+                has_teams = True
+    if not has_teams:
+        warn("SIN EQUIPOS CONFIGURADOS — el pipeline no va a descargar nada.")
+        print("  Cuando tengas los IDs, abrir el archivo .env y agregar:")
+        print("  TEAM_PREFIXES=id1,id2,id3")
+        print()
+        print("  (El archivo .env esta en la carpeta del proyecto)")
 
     # ── Paso 5: Login en Teams ───────────────────────────
     step(5, total, "Login en Teams")
@@ -248,20 +297,20 @@ def main():
     print("  guardada por aproximadamente 30 dias.")
     print()
 
-    if ask_yn("Loguearte en Teams ahora?", False):
+    if ask_yn("Loguearte en Teams ahora?"):
         print()
-        print("  Abriendo browser...")
-        print("  → Logueate en Teams con tu cuenta de UADE")
+        print("  Se va a abrir un browser.")
+        print("  → Logueate con tu cuenta de UADE")
         print("  → Cuando veas el panel de Teams, volve aca")
         print()
         subprocess.run([python_cmd(), str(PROJECT_DIR / "downloader.py"), "--visible"])
         ok("Sesion guardada")
     else:
-        print("  Para loguearte despues:")
+        warn("El login es necesario antes de correr el pipeline.")
         if SO == "Windows":
-            print("    python downloader.py --visible")
+            print("  Para loguearte despues: doble click en uade-login.bat")
         else:
-            print("    ./uade-login.sh")
+            print("  Para loguearte despues: ./uade-login.sh")
 
     # ── Guardar .env ─────────────────────────────────────
     if env_lines:
@@ -282,21 +331,17 @@ def main():
     print("  Setup completado!")
     print("=" * 55)
     print()
-    print("  Proximos pasos:")
-    print("  ────────────────")
+    print("  Proximo paso:")
+    print("  ──────────────")
     if SO == "Windows":
-        print("  1. Activar el entorno:  .venv\\Scripts\\activate.bat")
-        print("  2. Correr el pipeline:  run-pipeline.bat")
+        print("  Correr el pipeline:  run-pipeline.bat")
+        print("  (doble click o desde la terminal)")
     else:
-        print("  1. Activar el entorno:  source .venv/bin/activate")
-        print("  2. Correr el pipeline:  ./run-pipeline.sh")
+        print("  Correr el pipeline:  ./run-pipeline.sh")
     print()
     print("  El pipeline descarga material de Teams, lo organiza en")
-    print("  carpetas, transcribe las grabaciones, y genera resumenes")
-    print("  con tareas extraidas automaticamente.")
-    print()
-    print("  Para ver el estado:     python status.py")
-    print("  Para ver grabaciones:   python status.py --mp4")
+    print("  carpetas, transcribe las grabaciones, y genera resumenes.")
+    print("  Es seguro correrlo varias veces: solo procesa lo nuevo.")
     print()
 
 
