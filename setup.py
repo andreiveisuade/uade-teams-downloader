@@ -77,26 +77,36 @@ def run_quiet(cmd, **kwargs):
 
 
 def run_visible(cmd, label="", **kwargs):
-    """Corre un comando mostrando progreso con dots."""
+    """Corre un comando mostrando progreso con tiempo transcurrido."""
     if label:
         print(f"  {label}", end="", flush=True)
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
         )
-        dot_count = 0
+        start = time.time()
+        last_msg = ""
         while proc.poll() is None:
-            time.sleep(2)
-            if label:
+            time.sleep(3)
+            elapsed = int(time.time() - start)
+            if elapsed < 10:
                 print(".", end="", flush=True)
-                dot_count += 1
-        print()  # newline after dots
+            else:
+                mins = elapsed // 60
+                secs = elapsed % 60
+                msg = f" ({mins}m {secs}s)" if mins else f" ({secs}s)"
+                # Sobreescribir el tiempo anterior
+                print(f"\r  {label}{msg}   ", end="", flush=True)
+        elapsed = int(time.time() - start)
+        print()  # newline
         if proc.returncode != 0:
             stderr = proc.stderr.read()
             err(f"Fallo (exit {proc.returncode})")
             if stderr:
                 for line in stderr.strip().split("\n")[:5]:
                     print(f"    {line}")
+            if elapsed > 120:
+                warn("Tardo mas de 2 minutos. Posibles causas: internet lento, antivirus bloqueando.")
             return False
         return True
     except Exception as e:
