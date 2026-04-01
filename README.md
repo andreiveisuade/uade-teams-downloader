@@ -30,7 +30,7 @@ git clone https://github.com/andreiveisuade/uade-teams-downloader.git
 En el Explorador de archivos, ir a la carpeta `uade-teams-downloader` que se acaba de crear, y **doble click en `setup.bat`**.
 
 El setup te va a guiar paso a paso:
-- Te pregunta donde guardar los archivos (Enter para aceptar el default)
+- Te pregunta donde guardar los archivos (por defecto `C:\Users\TuUsuario\UADE`, podes cambiarlo)
 - Instala las dependencias automaticamente (tarda unos minutos, vas a ver puntitos de progreso)
 - Te pide una API key de Google para los resumenes (es gratis, te explica como obtenerla)
 - Te pide los IDs de tus equipos de Teams (te explica donde encontrarlos)
@@ -89,6 +89,26 @@ Te guia paso a paso (igual que en Windows).
 
 ---
 
+## Carpeta destino
+
+Durante el setup te pregunta donde guardar los archivos. Por defecto es `~/UADE`. El pipeline crea una subcarpeta por cada materia automaticamente, no hace falta crearlas a mano:
+
+```
+~/UADE/
+├── Nombre_Materia_1/
+│   ├── 01_Material_de_Clase/    slides, PDFs
+│   ├── 02_Apuntes_Personales/   resumenes generados
+│   ├── 03_Trabajos_Practicos/   ejercicios y TPs
+│   ├── 04_Evaluaciones/         parciales y finales
+│   ├── 05_Grabaciones/          videos + transcripciones
+│   ├── 06_Material_Extra/       cronogramas, bibliografia
+│   └── tareas.md                tareas extraidas
+├── Nombre_Materia_2/
+│   └── ...
+```
+
+Si queres cambiar la carpeta despues, editar `UADE_BASE_DIR` en el archivo `.env`.
+
 ## Que hace el pipeline
 
 Cada vez que lo corres:
@@ -101,18 +121,30 @@ Cada vez que lo corres:
 
 Es seguro correrlo varias veces: solo procesa lo nuevo.
 
-## Estructura de carpetas
+## Ejecucion manual vs automatica
 
-```
-~/UADE/4to cuatrimestre/Nombre_Materia/
-├── 01_Material_de_Clase/    slides, PDFs de clase
-├── 02_Apuntes_Personales/   resumenes generados
-├── 03_Trabajos_Practicos/   ejercicios y TPs
-├── 04_Evaluaciones/         parciales y finales
-├── 05_Grabaciones/          videos + transcripciones .txt
-├── 06_Material_Extra/       cronogramas, bibliografia
-└── tareas.md                tareas de todas las clases
-```
+Por defecto el pipeline se corre **manualmente** (doble click en `run-pipeline.bat` en Windows, o `./run-pipeline.sh` en macOS/Linux). Despues de cada clase, correlo para descargar el material nuevo.
+
+### Automatizar (opcional)
+
+Si queres que corra solo despues de cada clase:
+
+**macOS (launchd):**
+
+1. Copiar el archivo `com.andreiveis.uade-downloader.plist` a `~/Library/LaunchAgents/`
+2. Editar los horarios en el archivo (dias y horas de tus clases)
+3. Editar los paths para que apunten a tu carpeta
+4. Cargar: `launchctl load ~/Library/LaunchAgents/com.andreiveis.uade-downloader.plist`
+
+**Windows (Programador de tareas):**
+
+1. Buscar "Programador de tareas" en el menu Inicio
+2. Crear tarea basica → nombre: "UADE Pipeline"
+3. Desencadenador: Semanal → elegir los dias de tus clases, 1 hora despues de que terminen
+4. Accion: Iniciar programa → seleccionar `run-pipeline.bat`
+5. En la carpeta "Iniciar en": poner la ruta a `uade-teams-downloader`
+
+La sesion de Teams dura ~30 dias. Si expira, el pipeline te avisa y tenes que loguearte de nuevo (doble click en `uade-login.bat` en Windows o `./uade-login.sh` en macOS).
 
 ## Como encontrar los IDs de tus equipos de Teams
 
@@ -142,7 +174,7 @@ Todo se configura en el archivo `.env` (se crea durante el setup). Variables dis
 
 | Variable | Para que sirve | Default |
 |----------|---------------|---------|
-| `UADE_BASE_DIR` | Carpeta destino | `~/UADE/4to cuatrimestre` |
+| `UADE_BASE_DIR` | Carpeta destino | `~/UADE` |
 | `TEAM_PREFIXES` | IDs de equipos (coma separados) | — |
 | `GEMINI_API_KEY` | API key para resumenes | — |
 | `WHISPER_BACKEND` | `mlx` o `openai-whisper` | Auto-detecta |

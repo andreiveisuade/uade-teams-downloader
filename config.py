@@ -18,7 +18,7 @@ except ImportError:
 
 BASE_DIR = Path(os.getenv(
     "UADE_BASE_DIR",
-    str(Path.home() / "UADE" / "4to cuatrimestre"),
+    str(Path.home() / "UADE"),
 ))
 
 PROJECT_DIR = Path(__file__).parent

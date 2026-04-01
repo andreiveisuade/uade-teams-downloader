@@ -128,7 +128,7 @@ def main():
     print("  Aca se van a guardar los archivos descargados de Teams,")
     print("  organizados por materia.")
     print()
-    default_dir = str(Path.home() / "UADE" / "4to cuatrimestre")
+    default_dir = str(Path.home() / "UADE")
     base_dir = ask("Carpeta destino", default_dir)
     base_path = Path(base_dir)
 
