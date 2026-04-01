@@ -188,6 +188,39 @@ def transcribe(mp4_path: Path, model: str = "") -> str:
 # --- Summarization ---
 
 
+PROMPT_FILE = config.PROJECT_DIR / "prompt.md"
+
+
+def _load_prompt_template() -> str:
+    """Lee prompt.md si existe, si no usa el default."""
+    if PROMPT_FILE.exists():
+        return PROMPT_FILE.read_text(encoding="utf-8").strip()
+    return """Sos un asistente academico experto. Genera un resumen estructurado de esta clase
+universitaria para estudio. El resumen debe ser util para: preparar parciales, ponerse al dia
+si se falto, armar apuntes propios, y no perderse entregas.
+
+Genera el resumen con EXACTAMENTE este formato markdown:
+
+# {materia} — {clase} ({fecha})
+
+## Temas explicados
+- Cada tema con una explicacion concisa pero precisa
+
+## Conceptos clave para el examen
+- Concepto: definicion precisa tal como la dio el profesor
+
+## Tareas y entregas
+- [ ] Descripcion de la tarea
+
+## Dudas para revisar
+- Puntos ambiguos o temas que quedaron incompletos
+
+REGLAS:
+- Escribi en espanol argentino
+- No inventes informacion que no este en la transcripcion
+- Se completo pero no redundante"""
+
+
 def summarize(transcript: str, mp4_path: Path, class_num: int | None,
               class_date: str | None, ctx: dict,
               quality_warning: str | None = None) -> str:
@@ -206,61 +239,22 @@ def summarize(transcript: str, mp4_path: Path, class_num: int | None,
 
     context_block = "\n\n---\n\n".join(context_parts) if context_parts else ""
 
-    prompt = f"""Sos un asistente académico experto. Generá un resumen estructurado de esta clase
-universitaria para estudio. El resumen debe ser útil para: preparar parciales, ponerse al día
-si se faltó, armar apuntes propios, y no perderse entregas.
+    # Leer instrucciones del usuario y reemplazar placeholders
+    instructions = _load_prompt_template()
+    instructions = instructions.replace("{materia}", materia)
+    instructions = instructions.replace("{clase}", clase_label)
+    instructions = instructions.replace("{fecha}", fecha_label)
 
-Materia: {materia}
+    prompt = f"""Materia: {materia}
 Clase: {clase_label} ({fecha_label})
 
-{f"--- MATERIAL DE CONTEXTO ---{chr(10)}{chr(10)}{context_block}{chr(10)}{chr(10)}" if context_block else ""}--- TRANSCRIPCIÓN DE LA CLASE ---
+{f"--- MATERIAL DE CONTEXTO ---{chr(10)}{chr(10)}{context_block}{chr(10)}{chr(10)}" if context_block else ""}--- TRANSCRIPCION DE LA CLASE ---
 
 {transcript}
 
 --- INSTRUCCIONES ---
 
-Generá el resumen con EXACTAMENTE este formato markdown:
-
-# {materia} — {clase_label} ({fecha_label})
-
-## Ubicación en el programa
-- Unidad/tema según el cronograma (si se proporcionó)
-- Conexión con la clase anterior (si hay resumen previo)
-
-## Temas explicados
-- Cada tema con una explicación concisa pero precisa
-- Priorizá lo que el profe desarrolló en detalle
-
-## Conceptos clave para el examen
-- Concepto: definición precisa tal como la dio el profesor
-
-## Ejemplos y casos prácticos
-- Cada ejemplo mencionado y qué concepto ilustra
-
-## Lo que dijo el profe (citas relevantes)
-> Frases textuales que enfatizan algo importante
-
-## Correspondencia con slides
-- Qué slides corresponden a cada tema (si se proporcionó material)
-
-## Tareas y entregas
-- [ ] Descripción de la tarea 📅 YYYY-MM-DD
-- Si no hay tareas: "No se asignaron tareas en esta clase."
-
-## Fechas y deadlines mencionados
-- Parcial/entrega/evento: fecha
-
-## Dudas para revisar
-- Puntos ambiguos o temas que quedaron incompletos
-
----
-
-REGLAS:
-- Escribí en español argentino
-- No inventes información que no esté en la transcripción
-- Las citas del profe deben ser lo más textuales posible
-- El formato de tareas debe ser compatible con Obsidian Tasks
-- Sé completo pero no redundante"""
+{instructions}"""
 
     summary = llm_backend.complete(prompt)
     if quality_warning:

@@ -128,6 +128,14 @@ https://teams.microsoft.com/.../Section_568898/...
 4. Ese numero (ej: `568898`) es el ID del equipo
 5. Repetir para cada materia
 
+## Personalizar los resumenes
+
+El archivo `prompt.md` en la carpeta del proyecto contiene las instrucciones que se le dan a la IA para generar los resumenes. Podes editarlo para cambiar el formato, agregar secciones, o ajustar el estilo.
+
+Placeholders disponibles: `{materia}`, `{clase}`, `{fecha}` — se reemplazan automaticamente.
+
+Si borras `prompt.md`, usa un formato por defecto mas simple.
+
 ## Configuracion avanzada
 
 Todo se configura en el archivo `.env` (se crea durante el setup). Variables disponibles:
