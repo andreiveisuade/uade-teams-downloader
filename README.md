@@ -30,11 +30,11 @@ git clone https://github.com/andreiveisuade/uade-teams-downloader.git
 En el Explorador de archivos, ir a la carpeta `uade-teams-downloader` que se acaba de crear, y **doble click en `setup.bat`**.
 
 El setup te va a guiar paso a paso:
-- Te pregunta donde guardar los archivos (por defecto `C:\Users\TuUsuario\UADE`, podes cambiarlo)
-- Instala las dependencias automaticamente (tarda unos minutos, vas a ver puntitos de progreso)
-- Te pide una API key de Google para los resumenes (es gratis, te explica como obtenerla)
-- Te pide los IDs de tus equipos de Teams (te explica donde encontrarlos)
-- Te pide loguearte en Teams en un browser que se abre solo
+1. **Carpeta destino:** te muestra una carpeta por defecto (ej: `C:\Users\TuUsuario\UADE`). Apreta Enter para aceptar, o escribi otra ruta (ej: `D:\Facultad`).
+2. **Dependencias:** instala todo automaticamente (tarda unos minutos, vas a ver puntitos de progreso).
+3. **API key para resumenes:** te explica como obtener una gratis de Google. Seguir las instrucciones en pantalla.
+4. **IDs de equipos de Teams:** te explica donde encontrarlos en la URL de Teams.
+5. **Login en Teams:** se abre un browser, te logueas con tu cuenta de UADE, y listo.
 
 ### Paso 5: Uso diario
 
