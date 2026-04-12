@@ -8,7 +8,6 @@ y genera resumenes con contexto (slides + cronograma + clase anterior).
 import argparse
 import hashlib
 import re
-import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime
 from pathlib import Path
@@ -159,25 +158,8 @@ def transcribe(mp4_path: Path, model: str = "") -> str:
     backend = whisper_backend.detect()
     log(f"  Transcribiendo: {mp4_path.name} ({size_mb:.0f} MB) [{backend}]")
 
-    stop_heartbeat = threading.Event()
     start = datetime.now()
-
-    def heartbeat():
-        while not stop_heartbeat.wait(30):
-            elapsed = datetime.now() - start
-            mins = int(elapsed.total_seconds() // 60)
-            secs = int(elapsed.total_seconds() % 60)
-            log(f"  ... transcribiendo ({mins}m {secs}s)")
-
-    hb = threading.Thread(target=heartbeat, daemon=True)
-    hb.start()
-
-    try:
-        text = whisper_backend.transcribe(str(mp4_path), model=model)
-    finally:
-        stop_heartbeat.set()
-        hb.join(timeout=1)
-
+    text = whisper_backend.transcribe(str(mp4_path), model=model)
     elapsed = datetime.now() - start
     mins = int(elapsed.total_seconds() // 60)
     secs = int(elapsed.total_seconds() % 60)
@@ -300,22 +282,37 @@ def main():
     else:
         log(f"Encontrados {len(mp4s)} videos pendientes")
 
-    executor = ThreadPoolExecutor(max_workers=1) if not skip_summary else None
-    pending_summary: Future | None = None
+    MAX_SUMMARY_WORKERS = 3
+    executor = ThreadPoolExecutor(max_workers=MAX_SUMMARY_WORKERS) if not skip_summary else None
+    pending_summaries: list[Future] = []
 
-    def wait_pending():
-        nonlocal pending_summary
-        if pending_summary is None:
-            return
-        try:
-            pending_summary.result()
-        except Exception as e:
-            log(f"  ERROR generando resumen (se puede reintentar corriendo de nuevo): {e}")
-        pending_summary = None
+    def _drain_completed():
+        """Recolecta resultados de summaries terminados (sin bloquear)."""
+        done = [f for f in pending_summaries if f.done()]
+        for f in done:
+            pending_summaries.remove(f)
+            try:
+                f.result()
+            except Exception as e:
+                log(f"  ERROR generando resumen: {e}")
+
+    def wait_all():
+        """Espera que terminen TODOS los summaries pendientes."""
+        for f in pending_summaries:
+            try:
+                f.result()
+            except Exception as e:
+                log(f"  ERROR generando resumen: {e}")
+        pending_summaries.clear()
 
     def submit_summary(text, mp4, txt_path, summary_path, materia_dir, is_regen=False):
-        nonlocal pending_summary
-        wait_pending()
+        # Drenar completados; si estamos al max, esperar uno
+        _drain_completed()
+        while len(pending_summaries) >= MAX_SUMMARY_WORKERS:
+            import time
+            time.sleep(0.5)
+            _drain_completed()
+
         class_num = extract_class_num(mp4)
         class_date = extract_date(mp4)
 
@@ -337,24 +334,47 @@ def main():
             db.record_transcription(conn, str(mp4), str(txt_path),
                                     str(summary_path), context_hash=ctx_hash)
 
-        pending_summary = executor.submit(_do)
+        pending_summaries.append(executor.submit(_do))
 
     # Procesar nuevos
     for mp4 in mp4s:
-        if db.is_transcribed(conn, str(mp4)):
-            log(f"  SKIP (ya en DB): {mp4.name}")
-            continue
-
         txt_path = mp4.with_suffix(".txt")
         materia_dir = mp4.parent.parent
         apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
         apuntes_dir.mkdir(parents=True, exist_ok=True)
         summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
 
+        # Recovery: .txt existe en disco pero no en DB (crash anterior)
+        if txt_path.exists() and not db.is_transcribed(conn, str(mp4)):
+            text = txt_path.read_text(encoding="utf-8")
+            size_mb = mp4.stat().st_size / (1024 * 1024)
+            ok, _ = tasks.validate_transcription(text, size_mb)
+            if ok:
+                log(f"  RECOVERY: {txt_path.name} registrado en DB")
+                db.record_transcription(conn, str(mp4), str(txt_path))
+                if not skip_summary and executor:
+                    submit_summary(text, mp4, txt_path, summary_path, materia_dir)
+                continue
+            else:
+                log_warn(f"  RECOVERY: {txt_path.name} es basura, borrando para re-transcribir")
+                txt_path.unlink()
+
+        if db.is_transcribed(conn, str(mp4)):
+            log(f"  SKIP (ya en DB): {mp4.name}")
+            continue
+
         try:
             text = transcribe(mp4, model=args.model)
         except Exception as e:
             log(f"  ERROR transcribiendo {mp4.name}: {e}")
+            continue
+
+        # Validar calidad antes de guardar
+        size_mb = mp4.stat().st_size / (1024 * 1024)
+        ok, reason = tasks.validate_transcription(text, size_mb)
+        if not ok:
+            log_warn(f"  RECHAZADO: {mp4.name} — {reason}")
+            log_warn(f"  No se guarda el .txt. Revisar audio manualmente.")
             continue
 
         txt_path.write_text(text, encoding="utf-8")
@@ -364,7 +384,7 @@ def main():
         if not skip_summary and executor:
             submit_summary(text, mp4, txt_path, summary_path, materia_dir)
 
-    wait_pending()
+    wait_all()
 
     # Detectar resumenes faltantes o stale (material cambio)
     if not skip_summary and executor:
@@ -379,6 +399,15 @@ def main():
                 txt_path = mp4.with_suffix(".txt")
                 if not txt_path.exists():
                     continue
+                # Validar que el .txt existente no sea basura
+                text = txt_path.read_text(encoding="utf-8")
+                size_mb = mp4.stat().st_size / (1024 * 1024)
+                ok, reason = tasks.validate_transcription(text, size_mb)
+                if not ok:
+                    log_warn(f"  .txt existente de baja calidad: {txt_path.name} — {reason}")
+                    log_warn(f"  Borrando para re-transcribir en la proxima corrida.")
+                    txt_path.unlink()
+                    continue
                 class_num = extract_class_num(mp4)
                 ctx_hash = compute_context_hash(materia_dir, class_num)
                 if db.needs_resummarize(conn, str(mp4), ctx_hash):
@@ -386,14 +415,14 @@ def main():
                     apuntes_dir = materia_dir / config.FOLDERS["apuntes"]
                     apuntes_dir.mkdir(parents=True, exist_ok=True)
                     summary_path = apuntes_dir / (mp4.stem + "_resumen.md")
-                    text = txt_path.read_text(encoding="utf-8")
                     log(f"  Resumen pendiente para {mp4.name}")
                     submit_summary(text, mp4, txt_path, summary_path, materia_dir, is_regen=True)
         if stale:
-            wait_pending()
+            wait_all()
             log(f"  {stale} resumenes generados/regenerados")
 
     if executor:
+        wait_all()
         executor.shutdown(wait=True)
     conn.close()
 

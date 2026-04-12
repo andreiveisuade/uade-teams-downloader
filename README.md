@@ -173,6 +173,36 @@ Placeholders disponibles: `{materia}`, `{clase}`, `{fecha}` — se reemplazan au
 
 Si borras `prompt.md`, usa un formato por defecto mas simple.
 
+## Calidad de transcripciones
+
+El sistema tiene 3 capas de proteccion para asegurar que las transcripciones sean usables:
+
+### 1. Chunking + limpieza (durante la transcripcion)
+
+Las grabaciones de Teams se dividen en segmentos de 5 minutos antes de transcribir. Cada segmento se procesa independientemente, lo que evita que Whisper "alucine" (producir texto basura como "y y y y y..." cuando hay silencio). Un algoritmo de limpieza post-transcripcion detecta y remueve repeticiones excesivas que son artefactos de Whisper.
+
+### 2. Retry automatico
+
+Si la transcripcion falla la validacion de calidad (muy poco texto, mucha repeticion), el sistema reintenta automaticamente con segmentos mas chicos (2 minutos). Esto resuelve los casos donde 5 minutos es demasiado para un audio problematico.
+
+### 3. Gate de calidad (no guarda basura)
+
+Antes de guardar el `.txt`, el pipeline valida:
+- Que haya suficiente texto relativo al tamaño del video
+- Que no haya repeticiones excesivas (signo de alucinacion)
+- Si la transcripcion no pasa, **no se guarda** y el video queda pendiente
+
+Tambien valida `.txt` existentes: si un `.txt` viejo tiene basura, lo borra automaticamente para re-transcribir en la proxima corrida.
+
+### Tests
+
+```bash
+# Correr los tests de calidad de transcripcion
+.venv/bin/python -m pytest test_whisper.py -v
+```
+
+Los tests cubren: limpieza de alucinaciones, validacion de calidad, retry automatico, rechazo de basura, edge cases (archivos chicos, texto vacio, performance).
+
 ## Configuracion avanzada
 
 Todo se configura en el archivo `.env` (se crea durante el setup). Variables disponibles:
@@ -201,7 +231,8 @@ Todo se configura en el archivo `.env` (se crea durante el setup). Variables dis
 | Problema | Solucion |
 |----------|----------|
 | Sesion expirada | Correr `./uade-login.sh` o el pipeline la renueva solo |
-| Transcripcion lenta | Sin GPU tarda ~30-60 min por clase. Con Apple Silicon ~5 min |
+| Transcripcion lenta | Sin GPU tarda ~30-60 min por clase. Con Apple Silicon ~10 min |
+| Transcripcion con "y y y" | El sistema lo detecta y reintenta automaticamente. Si persiste, no guarda el archivo |
 | No genera resumenes | Verificar LLM: `python3 -c "from backends import llm; print(llm.detect())"` |
 
 ### General

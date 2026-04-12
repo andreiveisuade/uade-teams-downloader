@@ -9,8 +9,10 @@ import platform
 import random
 import re
 import sys
+import threading
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -46,12 +48,19 @@ FOLDER_KEYWORDS = {
 
 
 class DownloadDB:
-    """Wrapper sobre db.py para compatibilidad con el downloader."""
+    """Wrapper sobre db.py para compatibilidad con el downloader.
+
+    Thread-safe: usa un lock para serializar writes desde ThreadPoolExecutor.
+    """
 
     def __init__(self, path: Path = DB_PATH):
         import db as _db
         self._conn = _db.get_connection()
+        self._lock = threading.Lock()
         self._migrate_manifest()
+        cleaned = _db.cleanup_incomplete_downloads(self._conn)
+        if cleaned:
+            log(f"Limpiados {cleaned} registros de descargas incompletas")
 
     def _migrate_manifest(self):
         """One-time migration from manifest.json if it exists."""
@@ -73,9 +82,10 @@ class DownloadDB:
                 rest = segments[1] if len(segments) > 1 else ""
                 remote_path, _, filename = rest.rpartition("/")
                 self._conn.execute(
-                    "INSERT OR IGNORE INTO downloads VALUES (?,?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO downloads VALUES (?,?,?,?,?,?,?,?)",
                     (key, prefix, remote_path, filename, size,
-                     info.get("local_path", ""), info.get("downloaded_at", "")),
+                     info.get("local_path", ""), info.get("downloaded_at", ""),
+                     "complete"),
                 )
                 count += 1
             self._conn.commit()
@@ -86,35 +96,41 @@ class DownloadDB:
             log_warn(f"Error migrando manifest.json: {e}")
 
     def has(self, key: str) -> bool:
-        row = self._conn.execute("SELECT 1 FROM downloads WHERE key=?", (key,)).fetchone()
-        return row is not None
+        with self._lock:
+            import db as _db
+            return _db.has_download(self._conn, key)
 
-    def record(self, key: str, team_prefix: str, remote_path: str,
-               filename: str, size: int, local_path: str):
-        self._conn.execute(
-            "INSERT OR REPLACE INTO downloads VALUES (?,?,?,?,?,?,?)",
-            (key, team_prefix, remote_path, filename, size,
-             local_path, datetime.now().isoformat()),
-        )
-        self._conn.commit()
+    def record_pending(self, key: str, team_prefix: str, remote_path: str,
+                       filename: str, size: int):
+        with self._lock:
+            import db as _db
+            _db.record_download_pending(self._conn, key, team_prefix,
+                                        remote_path, filename, size)
+
+    def complete(self, key: str, local_path: str):
+        with self._lock:
+            import db as _db
+            _db.complete_download(self._conn, key, local_path)
+
+    def fail(self, key: str):
+        with self._lock:
+            import db as _db
+            _db.delete_download(self._conn, key)
 
     def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0]
+        with self._lock:
+            import db as _db
+            return _db.count_downloads(self._conn)
 
     def start_run(self) -> int:
-        cur = self._conn.execute(
-            "INSERT INTO runs (started_at) VALUES (?)",
-            (datetime.now().isoformat(),),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            import db as _db
+            return _db.start_run(self._conn)
 
     def finish_run(self, run_id: int, files_downloaded: int):
-        self._conn.execute(
-            "UPDATE runs SET finished_at=?, files_downloaded=? WHERE id=?",
-            (datetime.now().isoformat(), files_downloaded, run_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            import db as _db
+            _db.finish_run(self._conn, run_id, files_downloaded)
 
     def close(self):
         self._conn.close()
@@ -329,6 +345,9 @@ def sp_download_file(session: requests.Session, site_url: str, file_url: str, de
 # --- Crawl ---
 
 
+MAX_PARALLEL_DOWNLOADS = 3
+
+
 def crawl_folder(
     session: requests.Session,
     site_url: str,
@@ -338,10 +357,12 @@ def crawl_folder(
     db: DownloadDB,
     team_prefix: str,
     download_count: list,
+    dl_lock: threading.Lock,
 ):
-    if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
-        log_warn(f"Límite de {MAX_DOWNLOADS_PER_RUN} descargas alcanzado")
-        return
+    with dl_lock:
+        if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
+            log_warn(f"Límite de {MAX_DOWNLOADS_PER_RUN} descargas alcanzado")
+            return
 
     log_step(f"Listando: {remote_label}")
     try:
@@ -359,11 +380,13 @@ def crawl_folder(
     for f in folders:
         log(f"    carpeta: {f['name']}")
 
-    # Download files
+    # Recolectar items a descargar
+    to_download = []
     skipped = 0
     for item in files:
-        if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
-            break
+        with dl_lock:
+            if download_count[0] + len(to_download) >= MAX_DOWNLOADS_PER_RUN:
+                break
 
         name = sanitize_filename(item["name"])
         db_key = f"{team_prefix}/{remote_label}/{name}|{item['size']}"
@@ -373,27 +396,54 @@ def crawl_folder(
             continue
 
         dest = local_base / remote_label / name
-        log_step(f"Descargando: {remote_label}/{name}")
-
-        if sp_download_file(session, site_url, item["server_relative_url"], dest):
-            db.record(db_key, team_prefix, remote_label, name,
-                      item["size"], str(dest))
-            download_count[0] += 1
-            human_delay(3, 5)
-        else:
-            log_err(f"SKIP (falló): {name}")
+        to_download.append((item, db_key, name, dest))
 
     if skipped > 0:
         log(f"{skipped} archivos ya descargados (skip)")
 
+    # Descargar en paralelo con two-phase DB recording
+    if to_download:
+        def _download_one(item, db_key, name, dest):
+            # Phase 1: reservar en DB
+            db.record_pending(db_key, team_prefix, remote_label, name, item["size"])
+            log_step(f"Descargando: {remote_label}/{name}")
+            # Phase 2: descargar
+            if sp_download_file(session, site_url, item["server_relative_url"], dest):
+                # Phase 3: marcar complete
+                db.complete(db_key, str(dest))
+                human_delay(3, 5)
+                return True
+            else:
+                # Falló: limpiar record
+                db.fail(db_key)
+                log_err(f"SKIP (falló): {name}")
+                return False
+
+        workers = min(MAX_PARALLEL_DOWNLOADS, len(to_download))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_download_one, item, db_key, name, dest): db_key
+                for item, db_key, name, dest in to_download
+            }
+            for fut in as_completed(futures):
+                try:
+                    if fut.result():
+                        with dl_lock:
+                            download_count[0] += 1
+                except Exception as e:
+                    db_key = futures[fut]
+                    db.fail(db_key)
+                    log_err(f"Error en descarga: {e}")
+
     # Recurse into subfolders
     for item in folders:
-        if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
-            break
+        with dl_lock:
+            if download_count[0] >= MAX_DOWNLOADS_PER_RUN:
+                break
         sub_label = f"{remote_label}/{item['name']}"
         crawl_folder(
             session, site_url, item["server_relative_url"],
-            sub_label, local_base, db, team_prefix, download_count,
+            sub_label, local_base, db, team_prefix, download_count, dl_lock,
         )
         human_delay(1, 2)
 
@@ -518,6 +568,7 @@ def main():
 
             print("-" * 60)
             download_count = [0]
+            dl_lock = threading.Lock()
             run_id = db.start_run()
 
             for i, prefix in enumerate(prefixes):
@@ -550,6 +601,7 @@ def main():
                         crawl_folder(
                             sp_session, site_url, lib["root"],
                             lib_label, local_dest, db, prefix, download_count,
+                            dl_lock,
                         )
 
                     log_ok(f"Team {prefix} completado")

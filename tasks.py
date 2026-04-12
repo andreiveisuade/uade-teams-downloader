@@ -6,8 +6,41 @@ from pathlib import Path
 import config
 
 
+def validate_transcription(text: str, size_mb: float) -> tuple[bool, str]:
+    """Valida si una transcripcion es usable. Retorna (ok, razon).
+
+    Criterios de rechazo:
+    - Menos de 30 chars/MB en videos > 50MB (casi seguro basura)
+    - Mas de 5% de repeticion triple de palabras (alucinacion)
+    - Menos de 20 palabras totales en videos > 50MB
+    """
+    words = text.split()
+
+    if size_mb > 50 and len(words) < 20:
+        return False, f"transcripcion casi vacia ({len(words)} palabras para {size_mb:.0f} MB)"
+
+    chars_per_mb = len(text) / max(size_mb, 1)
+    if size_mb > 50 and chars_per_mb < 30:
+        return False, f"contenido insuficiente ({chars_per_mb:.0f} chars/MB, minimo: 30)"
+
+    if len(words) > 50:
+        # Detectar repeticion triple de cualquier palabra (incluye "y y y")
+        repeats = sum(
+            1 for i in range(2, len(words))
+            if words[i] == words[i-1] == words[i-2]
+        )
+        if repeats / len(words) > 0.05:
+            return False, f"alucinacion detectada ({repeats/len(words):.0%} repeticion)"
+
+    return True, "ok"
+
+
 def assess_quality(text: str, mp4_path: Path) -> str | None:
-    """Analiza la calidad de la transcripcion. Retorna advertencia o None."""
+    """Analiza la calidad de la transcripcion. Retorna advertencia o None.
+
+    A diferencia de validate_transcription(), esto genera warnings suaves
+    para el resumen pero no bloquea el guardado.
+    """
     issues = []
 
     size_mb = mp4_path.stat().st_size / (1024 * 1024)

@@ -15,6 +15,7 @@ def get_connection(check_same_thread: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(str(config.DB_PATH), check_same_thread=check_same_thread)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     _ensure_tables(conn)
     return conn
 
@@ -28,7 +29,8 @@ def _ensure_tables(conn: sqlite3.Connection):
             filename    TEXT NOT NULL,
             size        INTEGER NOT NULL,
             local_path  TEXT NOT NULL,
-            downloaded_at TEXT NOT NULL
+            downloaded_at TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'complete'
         )
     """)
     conn.execute("""
@@ -57,32 +59,74 @@ def _ensure_tables(conn: sqlite3.Connection):
             context_hash TEXT
         )
     """)
-    # Migrar tabla vieja si falta context_hash
-    try:
-        conn.execute("SELECT context_hash FROM transcriptions LIMIT 1")
-    except sqlite3.OperationalError:
-        conn.execute("ALTER TABLE transcriptions ADD COLUMN context_hash TEXT")
+    # Migraciones de columnas nuevas
+    for col, table, default in [
+        ("context_hash", "transcriptions", None),
+        ("status", "downloads", "'complete'"),
+    ]:
+        try:
+            conn.execute(f"SELECT {col} FROM {table} LIMIT 1")
+        except sqlite3.OperationalError:
+            default_clause = f" DEFAULT {default}" if default else ""
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT{default_clause}")
     conn.commit()
 
 
 # --- Downloads ---
 
 def has_download(conn: sqlite3.Connection, key: str) -> bool:
-    return conn.execute("SELECT 1 FROM downloads WHERE key=?", (key,)).fetchone() is not None
+    return conn.execute(
+        "SELECT 1 FROM downloads WHERE key=? AND status='complete'", (key,)
+    ).fetchone() is not None
 
 
 def record_download(conn: sqlite3.Connection, key: str, team_prefix: str,
                     remote_path: str, filename: str, size: int, local_path: str):
     conn.execute(
-        "INSERT OR REPLACE INTO downloads VALUES (?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO downloads VALUES (?,?,?,?,?,?,?,?)",
         (key, team_prefix, remote_path, filename, size,
-         local_path, datetime.now().isoformat()),
+         local_path, datetime.now().isoformat(), "complete"),
     )
     conn.commit()
 
 
+def record_download_pending(conn: sqlite3.Connection, key: str, team_prefix: str,
+                            remote_path: str, filename: str, size: int):
+    """Reserva un key en la DB antes de descargar. Status='downloading'."""
+    conn.execute(
+        "INSERT OR REPLACE INTO downloads VALUES (?,?,?,?,?,?,?,?)",
+        (key, team_prefix, remote_path, filename, size,
+         "", datetime.now().isoformat(), "downloading"),
+    )
+    conn.commit()
+
+
+def complete_download(conn: sqlite3.Connection, key: str, local_path: str):
+    """Marca una descarga como completada."""
+    conn.execute(
+        "UPDATE downloads SET local_path=?, downloaded_at=?, status='complete' WHERE key=?",
+        (local_path, datetime.now().isoformat(), key),
+    )
+    conn.commit()
+
+
+def delete_download(conn: sqlite3.Connection, key: str):
+    """Borra un registro de descarga (para limpiar fallidos)."""
+    conn.execute("DELETE FROM downloads WHERE key=?", (key,))
+    conn.commit()
+
+
+def cleanup_incomplete_downloads(conn: sqlite3.Connection) -> int:
+    """Limpia descargas que quedaron en status='downloading' (crash anterior)."""
+    cur = conn.execute("DELETE FROM downloads WHERE status='downloading'")
+    conn.commit()
+    return cur.rowcount
+
+
 def count_downloads(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM downloads").fetchone()[0]
+    return conn.execute(
+        "SELECT COUNT(*) FROM downloads WHERE status='complete'"
+    ).fetchone()[0]
 
 
 def start_run(conn: sqlite3.Connection) -> int:
@@ -112,6 +156,12 @@ def get_organized_dest(conn: sqlite3.Connection, source: str) -> str | None:
 def record_organized(conn: sqlite3.Connection, source: str, dest: str, category: str):
     conn.execute("INSERT OR REPLACE INTO organized VALUES (?,?,?,?)",
                  (source, dest, category, datetime.now().isoformat()))
+    conn.commit()
+
+
+def delete_organized(conn: sqlite3.Connection, source: str):
+    """Borra un registro de organizacion (phantom record)."""
+    conn.execute("DELETE FROM organized WHERE source_path=?", (source,))
     conn.commit()
 
 
@@ -148,3 +198,29 @@ def record_transcription(conn: sqlite3.Connection, mp4_path: str, txt_path: str,
          now if summary_path else None, context_hash),
     )
     conn.commit()
+
+
+def delete_transcription(conn: sqlite3.Connection, mp4_path: str):
+    """Borra un registro de transcripcion (phantom record)."""
+    conn.execute("DELETE FROM transcriptions WHERE mp4_path=?", (mp4_path,))
+    conn.commit()
+
+
+# --- Health check helpers ---
+
+def all_downloads(conn: sqlite3.Connection) -> list[tuple]:
+    return conn.execute(
+        "SELECT key, local_path, status FROM downloads"
+    ).fetchall()
+
+
+def all_organized(conn: sqlite3.Connection) -> list[tuple]:
+    return conn.execute(
+        "SELECT source_path, dest_path FROM organized"
+    ).fetchall()
+
+
+def all_transcriptions(conn: sqlite3.Connection) -> list[tuple]:
+    return conn.execute(
+        "SELECT mp4_path, txt_path, summary_path FROM transcriptions"
+    ).fetchall()

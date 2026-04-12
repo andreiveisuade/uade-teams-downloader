@@ -190,6 +190,32 @@ def ensure_dest_folders(materia_dir: Path):
 # --- Main ---
 
 
+def _recover_organized(materia_dir: Path, conn):
+    """Repara inconsistencias de corridas anteriores.
+
+    - Phantom records: organized apunta a dest que no existe → borra record
+    - Leftover sources: source y dest existen → borra source (move exitoso, cleanup falló)
+    """
+    repaired = 0
+    rows = conn.execute(
+        "SELECT source_path, dest_path FROM organized WHERE source_path LIKE ?",
+        (str(materia_dir) + "%",),
+    ).fetchall()
+    for source, dest in rows:
+        source_p = Path(source)
+        dest_p = Path(dest)
+        if not dest_p.exists():
+            # Dest no existe: phantom record
+            db.delete_organized(conn, source)
+            repaired += 1
+        elif source_p.exists() and dest_p.exists():
+            # Ambos existen: move fue exitoso pero source no se limpió
+            source_p.unlink()
+            repaired += 1
+    if repaired:
+        log(f"  Recovery: {repaired} inconsistencias reparadas")
+
+
 def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
     """Organize all files in teams_material/ for one materia."""
     teams_dir = materia_dir / "teams_material"
@@ -198,6 +224,7 @@ def organize_materia(materia_dir: Path, conn, dry_run: bool = False):
         log(f"Resultado: sin archivos pendientes")
         return
 
+    _recover_organized(materia_dir, conn)
     ensure_dest_folders(materia_dir)
 
     files = sorted(f for f in teams_dir.rglob("*") if f.is_file())

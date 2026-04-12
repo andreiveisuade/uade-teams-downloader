@@ -199,10 +199,12 @@ run_pipeline() {
         had_errors=true
     fi
 
-    # Paso 4: Status
+    # Paso 4: Status + health check
     step 4 4 "Estado del pipeline"
     echo ""
     python3 -u status.py 2>&1 | tee -a "$LOGFILE"
+    echo ""
+    python3 -u status.py --health --fix 2>&1 | tee -a "$LOGFILE"
 
     local elapsed=$(( SECONDS - start_time ))
     local mins=$(( elapsed / 60 ))
