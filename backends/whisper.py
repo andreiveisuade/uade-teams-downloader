@@ -11,8 +11,9 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from pathlib import Path
 
 import config
 from logger import log
@@ -25,6 +26,10 @@ CHUNK_MINUTES = 5
 # pero mlx-whisper puede colgarse en audios problematicos.
 # 180s (3 min) es suficiente incluso en hardware lento.
 CHUNK_TIMEOUT = 180
+
+# Helper standalone para correr transcripcion en subprocess (matable)
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+TRANSCRIBE_HELPER = PROJECT_DIR / "transcribe_chunk.py"
 
 
 def _split_audio(mp4_path: str, chunk_minutes: int = CHUNK_MINUTES) -> list[str] | None:
@@ -189,16 +194,41 @@ def _transcribe_single(audio_path: str, model: str, language: str, backend: str)
 
 def _transcribe_with_timeout(chunk: str, model: str, language: str,
                              backend: str, timeout: int) -> str | None:
-    """Transcribe un chunk con timeout. Retorna None si se cuelga."""
-    # Usar un executor de un solo thread con timeout.
-    # Si se cuelga, el thread queda huerfano pero el script es one-shot
-    # asi que no importa (el proceso termina al final).
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_transcribe_single, chunk, model, language, backend)
-        try:
-            return future.result(timeout=timeout)
-        except FutureTimeout:
-            return None
+    """Transcribe un chunk en un subprocess con timeout.
+
+    mlx-whisper ejecuta codigo C que no puede interrumpirse desde threads Python.
+    La unica forma confiable de matarlo si se cuelga es desde otro proceso.
+    """
+    out_path = chunk + ".out"
+    if os.path.exists(out_path):
+        os.unlink(out_path)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(TRANSCRIBE_HELPER),
+             chunk, model, language, backend, out_path],
+            capture_output=True, timeout=timeout,
+        )
+        if result.returncode == 0 and os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                return f.read()
+        # Subprocess fallo
+        err = result.stderr.decode("utf-8", errors="replace")[:200] if result.stderr else ""
+        if err:
+            log(f"  Subprocess error: {err}")
+        return None
+    except subprocess.TimeoutExpired:
+        # subprocess.run mata el proceso automaticamente
+        return None
+    except Exception as e:
+        log(f"  Error en subprocess: {e}")
+        return None
+    finally:
+        if os.path.exists(out_path):
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
 
 
 def _transcribe_chunked(mp4_path: str, model: str, language: str,

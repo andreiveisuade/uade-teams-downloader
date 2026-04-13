@@ -381,30 +381,71 @@ class TestEdgeCases:
         # Solo 1 llamada, sin retry
         assert mock_chunked.call_count == 1
 
-    @patch('backends.whisper._transcribe_single')
-    def test_chunk_timeout_returns_none(self, mock_transcribe):
-        """Si un chunk se cuelga (simulado), _transcribe_with_timeout retorna None."""
-        import time
+    def test_chunk_timeout_kills_subprocess(self, tmp_path):
+        """Si un chunk se cuelga en subprocess, se mata por timeout y retorna None."""
         from backends.whisper import _transcribe_with_timeout
+        import backends.whisper as whisper_mod
 
-        def hang(*args):
-            time.sleep(5)
-            return "never"
+        # Crear helper falso que se cuelga
+        fake_helper = tmp_path / "fake_hang.py"
+        fake_helper.write_text("import time; time.sleep(60)\n")
 
-        mock_transcribe.side_effect = hang
+        original = whisper_mod.TRANSCRIBE_HELPER
+        whisper_mod.TRANSCRIBE_HELPER = fake_helper
+        try:
+            result = _transcribe_with_timeout(
+                "/fake.wav", "medium", "es", "mlx", timeout=2
+            )
+            assert result is None
+        finally:
+            whisper_mod.TRANSCRIBE_HELPER = original
 
-        # Timeout de 1s, la funcion se demora 5s → debe retornar None
-        result = _transcribe_with_timeout("/fake.wav", "medium", "es", "mlx", timeout=1)
-        assert result is None
-
-    @patch('backends.whisper._transcribe_single')
-    def test_chunk_fast_returns_text(self, mock_transcribe):
-        """Si transcribe rapido, retorna el texto normalmente."""
+    def test_chunk_subprocess_returns_text(self, tmp_path):
+        """Si el subprocess termina rapido, retorna el texto del archivo de output."""
         from backends.whisper import _transcribe_with_timeout
-        mock_transcribe.return_value = "transcripcion exitosa"
+        import backends.whisper as whisper_mod
 
-        result = _transcribe_with_timeout("/fake.wav", "medium", "es", "mlx", timeout=30)
-        assert result == "transcripcion exitosa"
+        fake_chunk = tmp_path / "chunk.wav"
+        fake_chunk.write_bytes(b"fake")
+
+        # Helper que escribe texto al out_path (sys.argv[5])
+        fake_helper = tmp_path / "fake_ok.py"
+        fake_helper.write_text(
+            "import sys\n"
+            "with open(sys.argv[5], 'w') as f:\n"
+            "    f.write('texto transcripto')\n"
+        )
+
+        original = whisper_mod.TRANSCRIBE_HELPER
+        whisper_mod.TRANSCRIBE_HELPER = fake_helper
+        try:
+            result = _transcribe_with_timeout(
+                str(fake_chunk), "medium", "es", "mlx", timeout=10
+            )
+            assert result == "texto transcripto"
+        finally:
+            whisper_mod.TRANSCRIBE_HELPER = original
+
+    def test_chunk_subprocess_failure_returns_none(self, tmp_path):
+        """Si el subprocess falla (exit != 0), retorna None."""
+        from backends.whisper import _transcribe_with_timeout
+        import backends.whisper as whisper_mod
+
+        fake_chunk = tmp_path / "chunk.wav"
+        fake_chunk.write_bytes(b"fake")
+
+        fake_helper = tmp_path / "fake_fail.py"
+        fake_helper.write_text("import sys; sys.exit(1)\n")
+
+        original = whisper_mod.TRANSCRIBE_HELPER
+        whisper_mod.TRANSCRIBE_HELPER = fake_helper
+        try:
+            result = _transcribe_with_timeout(
+                str(fake_chunk), "medium", "es", "mlx", timeout=10
+            )
+            assert result is None
+        finally:
+            whisper_mod.TRANSCRIBE_HELPER = original
 
     def test_resummarize_catches_stale_garbage(self):
         """validate_transcription detecta .txt basura que existian antes del fix."""
