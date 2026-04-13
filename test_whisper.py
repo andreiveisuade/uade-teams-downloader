@@ -381,6 +381,31 @@ class TestEdgeCases:
         # Solo 1 llamada, sin retry
         assert mock_chunked.call_count == 1
 
+    @patch('backends.whisper._transcribe_single')
+    def test_chunk_timeout_returns_none(self, mock_transcribe):
+        """Si un chunk se cuelga (simulado), _transcribe_with_timeout retorna None."""
+        import time
+        from backends.whisper import _transcribe_with_timeout
+
+        def hang(*args):
+            time.sleep(5)
+            return "never"
+
+        mock_transcribe.side_effect = hang
+
+        # Timeout de 1s, la funcion se demora 5s → debe retornar None
+        result = _transcribe_with_timeout("/fake.wav", "medium", "es", "mlx", timeout=1)
+        assert result is None
+
+    @patch('backends.whisper._transcribe_single')
+    def test_chunk_fast_returns_text(self, mock_transcribe):
+        """Si transcribe rapido, retorna el texto normalmente."""
+        from backends.whisper import _transcribe_with_timeout
+        mock_transcribe.return_value = "transcripcion exitosa"
+
+        result = _transcribe_with_timeout("/fake.wav", "medium", "es", "mlx", timeout=30)
+        assert result == "transcripcion exitosa"
+
     def test_resummarize_catches_stale_garbage(self):
         """validate_transcription detecta .txt basura que existian antes del fix."""
         # Simular un .txt viejo con basura

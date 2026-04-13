@@ -55,7 +55,9 @@ class DownloadDB:
 
     def __init__(self, path: Path = DB_PATH):
         import db as _db
-        self._conn = _db.get_connection()
+        # check_same_thread=False requerido para el ThreadPoolExecutor.
+        # Los writes estan serializados con self._lock, asi que es safe.
+        self._conn = _db.get_connection(check_same_thread=False)
         self._lock = threading.Lock()
         self._migrate_manifest()
         cleaned = _db.cleanup_incomplete_downloads(self._conn)

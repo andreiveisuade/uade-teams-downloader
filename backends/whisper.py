@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import config
 from logger import log
@@ -20,6 +21,10 @@ _backend = None
 _model_loaded = False
 
 CHUNK_MINUTES = 5
+# Timeout por segmento: chunks de 5 min normalmente tardan 10-15s,
+# pero mlx-whisper puede colgarse en audios problematicos.
+# 180s (3 min) es suficiente incluso en hardware lento.
+CHUNK_TIMEOUT = 180
 
 
 def _split_audio(mp4_path: str, chunk_minutes: int = CHUNK_MINUTES) -> list[str] | None:
@@ -182,6 +187,20 @@ def _transcribe_single(audio_path: str, model: str, language: str, backend: str)
     raise RuntimeError(f"Backend de whisper desconocido: {backend}")
 
 
+def _transcribe_with_timeout(chunk: str, model: str, language: str,
+                             backend: str, timeout: int) -> str | None:
+    """Transcribe un chunk con timeout. Retorna None si se cuelga."""
+    # Usar un executor de un solo thread con timeout.
+    # Si se cuelga, el thread queda huerfano pero el script es one-shot
+    # asi que no importa (el proceso termina al final).
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_transcribe_single, chunk, model, language, backend)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeout:
+            return None
+
+
 def _transcribe_chunked(mp4_path: str, model: str, language: str,
                         backend: str, chunk_minutes: int) -> str:
     """Transcribe con chunks del tamaño indicado. Retorna texto."""
@@ -195,10 +214,15 @@ def _transcribe_chunked(mp4_path: str, model: str, language: str,
     try:
         parts = []
         skipped = 0
+        timeouts = 0
         cleaned_count = 0
         for i, chunk in enumerate(chunks):
             log(f"  Transcribiendo segmento {i+1}/{len(chunks)}...")
-            text = _transcribe_single(chunk, model, language, backend)
+            text = _transcribe_with_timeout(chunk, model, language, backend, CHUNK_TIMEOUT)
+            if text is None:
+                log(f"  Segmento {i+1} TIMEOUT ({CHUNK_TIMEOUT}s) — saltando")
+                timeouts += 1
+                continue
             cleaned = _clean_hallucinations(text)
             if _is_empty_after_cleaning(text):
                 log(f"  Segmento {i+1} descartado (silencio)")
@@ -207,8 +231,8 @@ def _transcribe_chunked(mp4_path: str, model: str, language: str,
             if len(cleaned) < len(text) * 0.9:
                 cleaned_count += 1
             parts.append(cleaned)
-        if skipped or cleaned_count:
-            log(f"  {skipped} segmentos descartados, {cleaned_count} limpiados")
+        if skipped or cleaned_count or timeouts:
+            log(f"  {skipped} silencio, {cleaned_count} limpiados, {timeouts} timeouts")
         return " ".join(parts)
     finally:
         _cleanup_chunks(chunks)
