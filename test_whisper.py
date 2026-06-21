@@ -5,7 +5,12 @@ from backends.whisper import (
     _clean_hallucinations, _is_empty_after_cleaning, _transcribe_chunked,
     transcribe,
 )
-from tasks import assess_quality, validate_transcription
+from tasks import (
+    assess_quality,
+    validate_transcription,
+    is_rejected_marker,
+    AUDIO_REJECTED_MARKER,
+)
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -335,6 +340,36 @@ class TestTranscriberPipeline:
         text = " ".join(words[i % len(words)] for i in range(3000))
         ok, reason = validate_transcription(text, size_mb=200)
         assert ok is True
+
+
+class TestAudioRejectedMarker:
+    """El tombstone de audio rechazado es estado terminal: no se borra ni re-transcribe."""
+
+    def test_marker_recognized(self):
+        placeholder = (
+            f"{AUDIO_REJECTED_MARKER}\n\n"
+            "Detectado por pre-check de audio: audio en silencio (5/5 samples < -60dB)\n"
+        )
+        assert is_rejected_marker(placeholder) is True
+
+    def test_marker_recognized_with_leading_whitespace(self):
+        assert is_rejected_marker(f"\n  {AUDIO_REJECTED_MARKER}\n") is True
+
+    def test_real_transcription_not_marker(self):
+        assert is_rejected_marker("Hola, bienvenidos a la clase de hoy.") is False
+
+    def test_empty_not_marker(self):
+        assert is_rejected_marker("") is False
+
+    def test_marker_would_fail_validation(self):
+        """Sin la guarda, el tombstone se borraria como basura (0 chars/MB en mp4 grande).
+
+        Justifica por que is_rejected_marker debe interceptar antes de validate.
+        """
+        placeholder = f"{AUDIO_REJECTED_MARKER}\nrazon\n"
+        ok, _ = validate_transcription(placeholder, size_mb=1300)
+        assert ok is False
+        assert is_rejected_marker(placeholder) is True
 
 
 # =====================================================================

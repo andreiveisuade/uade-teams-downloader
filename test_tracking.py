@@ -94,6 +94,26 @@ class TestHealthCheckHelpers:
         db.delete_transcription(tmp_db, "/v.mp4")
         assert db.is_transcribed(tmp_db, "/v.mp4") is False
 
+    def test_reconcile_reapunta_download_a_organized(self, tmp_db):
+        """Tras organizar (mover), el download apunta al dest, no al path viejo."""
+        staging = "/teams_dir/Clase 1- Actividad.docx"
+        final = "/UADE/Materia/01_Material/Clase 1- Actividad.docx"
+        db.record_download(tmp_db, "k1", "t", "p", "Clase 1- Actividad.docx", 100, staging)
+        db.record_organized(tmp_db, staging, final, "material")
+
+        n = db.reconcile_downloads_to_organized(tmp_db)
+
+        assert n == 1
+        key, local_path, status = db.all_downloads(tmp_db)[0]
+        assert local_path == final  # ya no apunta al staging movido
+
+    def test_reconcile_no_toca_downloads_sin_organizar(self, tmp_db):
+        """Un download que no fue organizado queda intacto."""
+        db.record_download(tmp_db, "k1", "t", "p", "f.pdf", 100, "/teams_dir/f.pdf")
+        n = db.reconcile_downloads_to_organized(tmp_db)
+        assert n == 0
+        assert db.all_downloads(tmp_db)[0][1] == "/teams_dir/f.pdf"
+
 
 # =====================================================================
 # Health check integration (status.py)

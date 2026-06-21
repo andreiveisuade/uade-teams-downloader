@@ -7,6 +7,17 @@ from pathlib import Path
 import config
 
 
+AUDIO_REJECTED_MARKER = "[AUDIO INCOMPLETO — NO TRANSCRIBIBLE]"
+
+
+def is_rejected_marker(text: str) -> bool:
+    """True si el .txt es un tombstone de audio rechazado, no una transcripcion.
+
+    Estos .txt no deben borrarse ni re-transcribirse: son estado terminal.
+    """
+    return text.lstrip().startswith(AUDIO_REJECTED_MARKER)
+
+
 def check_audio_health(mp4_path: Path) -> tuple[bool, str]:
     """Sample de audio en 5 puntos del mp4. Si >60% son silencio, rechaza.
 

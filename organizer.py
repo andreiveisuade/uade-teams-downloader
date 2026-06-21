@@ -328,6 +328,11 @@ def main():
             continue
         organize_materia(materia_dir, conn, dry_run=args.dry_run)
 
+    if not args.dry_run:
+        reapuntados = db.reconcile_downloads_to_organized(conn)
+        if reapuntados:
+            log(f"Reconciliados {reapuntados} registros de descarga con su ubicación organizada")
+
     conn.close()
     log("\nListo.")
 

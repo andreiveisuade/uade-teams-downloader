@@ -348,6 +348,10 @@ def main():
         if txt_path.exists() and not db.is_transcribed(conn, str(mp4)):
             text = txt_path.read_text(encoding="utf-8")
             size_mb = mp4.stat().st_size / (1024 * 1024)
+            if tasks.is_rejected_marker(text):
+                log(f"  SKIP (audio rechazado): {txt_path.name}")
+                db.record_transcription(conn, str(mp4), str(txt_path))
+                continue
             ok, _ = tasks.validate_transcription(text, size_mb)
             if ok:
                 log(f"  RECOVERY: {txt_path.name} registrado en DB")
@@ -368,7 +372,7 @@ def main():
             log_warn(f"  RECHAZADO (pre-check): {mp4.name} — {audio_reason}")
             db.record_transcription(conn, str(mp4), str(txt_path))
             txt_path.write_text(
-                f"[AUDIO INCOMPLETO — NO TRANSCRIBIBLE]\n\n"
+                f"{tasks.AUDIO_REJECTED_MARKER}\n\n"
                 f"Detectado por pre-check de audio: {audio_reason}\n"
                 f"El mp4 no entró a transcripción.\n",
                 encoding="utf-8",
@@ -413,6 +417,8 @@ def main():
                     continue
                 # Validar que el .txt existente no sea basura
                 text = txt_path.read_text(encoding="utf-8")
+                if tasks.is_rejected_marker(text):
+                    continue
                 size_mb = mp4.stat().st_size / (1024 * 1024)
                 ok, reason = tasks.validate_transcription(text, size_mb)
                 if not ok:

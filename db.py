@@ -224,3 +224,23 @@ def all_transcriptions(conn: sqlite3.Connection) -> list[tuple]:
     return conn.execute(
         "SELECT mp4_path, txt_path, summary_path FROM transcriptions"
     ).fetchall()
+
+
+def reconcile_downloads_to_organized(conn: sqlite3.Connection) -> int:
+    """Reapunta downloads.local_path a la ubicacion organizada (dest_path).
+
+    El organizer mueve archivos de teams_dir a su carpeta final. Sin esto el
+    registro de download queda apuntando al path viejo (ya movido) -> el health
+    check lo marca phantom y lo borra -> se re-descarga en la proxima corrida.
+    Retorna cuantos registros se reapuntaron.
+    """
+    cur = conn.execute(
+        """UPDATE downloads
+           SET local_path = (
+               SELECT dest_path FROM organized
+               WHERE organized.source_path = downloads.local_path
+           )
+           WHERE local_path IN (SELECT source_path FROM organized)"""
+    )
+    conn.commit()
+    return cur.rowcount
