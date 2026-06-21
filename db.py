@@ -59,6 +59,14 @@ def _ensure_tables(conn: sqlite3.Connection):
             context_hash TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_status (
+            task_key TEXT PRIMARY KEY,
+            materia  TEXT NOT NULL,
+            text     TEXT NOT NULL,
+            done_at  TEXT NOT NULL
+        )
+    """)
     # Migraciones de columnas nuevas
     for col, table, default in [
         ("context_hash", "transcriptions", None),
@@ -244,3 +252,22 @@ def reconcile_downloads_to_organized(conn: sqlite3.Connection) -> int:
     )
     conn.commit()
     return cur.rowcount
+
+
+# --- Task status (radar) ---
+
+def mark_task_done(conn: sqlite3.Connection, task_key: str, materia: str, text: str):
+    conn.execute(
+        "INSERT OR REPLACE INTO task_status VALUES (?,?,?,?)",
+        (task_key, materia, text, datetime.now().isoformat()),
+    )
+    conn.commit()
+
+
+def unmark_task_done(conn: sqlite3.Connection, task_key: str):
+    conn.execute("DELETE FROM task_status WHERE task_key=?", (task_key,))
+    conn.commit()
+
+
+def done_task_keys(conn: sqlite3.Connection) -> set[str]:
+    return {r[0] for r in conn.execute("SELECT task_key FROM task_status").fetchall()}
