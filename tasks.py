@@ -1,9 +1,51 @@
 """Consolidacion de tareas y analisis de calidad de transcripciones."""
 
 import re
+import subprocess
 from pathlib import Path
 
 import config
+
+
+def check_audio_health(mp4_path: Path) -> tuple[bool, str]:
+    """Sample de audio en 5 puntos del mp4. Si >60% son silencio, rechaza.
+
+    Retorna (ok, razon). Si ffmpeg no esta disponible, asume ok.
+    """
+    try:
+        dur = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(mp4_path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        total = float(dur.stdout.strip())
+    except (subprocess.SubprocessError, ValueError, FileNotFoundError):
+        return True, "ffprobe no disponible, skip check"
+
+    if total < 60:
+        return True, "video muy corto, skip check"
+
+    samples = [total * f for f in (0.1, 0.3, 0.5, 0.7, 0.9)]
+    silent = 0
+    for t in samples:
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-ss", str(t), "-t", "10", "-i", str(mp4_path),
+                 "-af", "volumedetect", "-f", "null", "-"],
+                capture_output=True, text=True, timeout=30,
+            )
+            for line in r.stderr.splitlines():
+                if "mean_volume" in line:
+                    db = float(line.split(":")[-1].strip().split()[0])
+                    if db < -60:
+                        silent += 1
+                    break
+        except (subprocess.SubprocessError, ValueError):
+            continue
+
+    if silent >= 4:
+        return False, f"audio en silencio ({silent}/5 samples < -60dB)"
+    return True, "ok"
 
 
 def validate_transcription(text: str, size_mb: float) -> tuple[bool, str]:

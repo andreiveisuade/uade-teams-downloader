@@ -363,6 +363,18 @@ def main():
             log(f"  SKIP (ya en DB): {mp4.name}")
             continue
 
+        audio_ok, audio_reason = tasks.check_audio_health(mp4)
+        if not audio_ok:
+            log_warn(f"  RECHAZADO (pre-check): {mp4.name} — {audio_reason}")
+            db.record_transcription(conn, str(mp4), str(txt_path))
+            txt_path.write_text(
+                f"[AUDIO INCOMPLETO — NO TRANSCRIBIBLE]\n\n"
+                f"Detectado por pre-check de audio: {audio_reason}\n"
+                f"El mp4 no entró a transcripción.\n",
+                encoding="utf-8",
+            )
+            continue
+
         try:
             text = transcribe(mp4, model=args.model)
         except Exception as e:

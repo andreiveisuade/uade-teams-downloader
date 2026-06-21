@@ -398,6 +398,11 @@ def crawl_folder(
             continue
 
         dest = local_base / remote_label / name
+        if dest.exists() and dest.stat().st_size == item["size"]:
+            db.record_pending(db_key, team_prefix, remote_label, name, item["size"])
+            db.complete(db_key, str(dest))
+            skipped += 1
+            continue
         to_download.append((item, db_key, name, dest))
 
     if skipped > 0:
